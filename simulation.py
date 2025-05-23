@@ -5,13 +5,9 @@ from environment import Environment
 import random
 import numpy as np
 
-exit_radius = 0.5
-exit_rate_limit = 1  # max number of agents that can exit per frame
 num_agents = 50
-agent_speed = 0.5
-agent_radius = 0.5
 
-def run_simulation():
+def run_simulation(num_agents=20, exit_radius=1.0):
     env = Environment(width=20, height=20, exits=[(10, 0)])
     agents = [Agent(random.uniform(0, 20), random.uniform(10, 20), env.exits[0]) for _ in range(num_agents)]
 
@@ -22,26 +18,17 @@ def run_simulation():
     ax.set_ylim(0, env.height)
 
     def update(frame):
-        exiting_now = 0
         for agent in agents:
-            if agent.has_exited:
-                continue
-
-            # Check if near the exit
-            dx = agent.position[0] - env.exits[0][0]
-            dy = agent.position[1] - env.exits[0][1]
-            distance = (dx**2 + dy**2)**0.5
-
-            if distance < exit_radius and exiting_now < exit_rate_limit:
+            dx, dy = agent.position - env.exits[0]
+            if not agent.has_exited and np.linalg.norm([dx, dy]) < exit_radius:
                 agent.has_exited = True
-                exiting_now += 1
-            else:
-                agent.move_toward_goal(speed=0.2)
+        for agent in agents:
+            agent.step(agents, env)
 
         active_positions = [a.position for a in agents if not a.has_exited]
-        scat.set_offsets(np.array(active_positions).reshape(-1, 2))
-
-        if all(agent.has_exited for agent in agents):
+        if active_positions:
+            scat.set_offsets(np.array(active_positions).reshape(-1, 2))
+        else:
             ani.event_source.stop()
         return scat,
 

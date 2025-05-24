@@ -99,9 +99,19 @@ class Agent:
         if self.has_exited:
             return
 
-        # Dynamically choose closest goal on exit
+        # 🚪 Choose goal along door with wall penalty
         exit_goals = environment.get_exit_goals(num_points=7)
-        self.goal = min(exit_goals, key=lambda g: np.linalg.norm(self.position - g))
+
+        def goal_score(g):
+            dist = np.linalg.norm(self.position - g)
+            wall_dist = min(
+                self.distance_to_line_segment(g, w0, w1)
+                for (w0, w1) in environment.walls
+            )
+            penalty = 0.5 if wall_dist < 0.5 else 0.0  # steer away from edges
+            return dist + penalty
+
+        self.goal = min(exit_goals, key=goal_score)
 
         f_goal = self.compute_goal_force()
         f_agents = self.compute_agent_repulsion(agents)
@@ -111,5 +121,18 @@ class Agent:
         acceleration = total_force
         self.velocity += acceleration * dt
         self.position += self.velocity * dt
+
+        # Prevent escape through non-exit walls
+        x, y = self.position
+        if y < 0:
+            allowed = any(
+                y0 == 0 and y1 == 0 and x0 <= x <= x1
+                for (x0, y0), (x1, y1) in environment.exits
+            )
+            if not allowed:
+                self.position[1] = 0
+
+        self.position[0] = np.clip(self.position[0], 0, environment.width)
+        self.position[1] = np.clip(self.position[1], 0, environment.height)
 
         self.check_patience()

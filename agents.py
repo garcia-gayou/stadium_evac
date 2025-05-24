@@ -59,13 +59,12 @@ class Agent:
                 continue
             n_iw = d_iw_vec / d_iw
 
-            # ✨ Fade out near exits
             min_exit_dist = min(
                 self.distance_to_line_segment(closest_point, e0, e1)
                 for (e0, e1) in environment.exits
             ) if environment.exits else float('inf')
 
-            decay = np.exp(-min_exit_dist / decay_scale)  # 0 near exits, 1 far
+            decay = np.exp(-min_exit_dist / decay_scale)
             strength = A * np.exp((self.radius - d_iw) / B)
             repulsion = strength * n_iw * (1 - decay)
             force += repulsion
@@ -73,7 +72,6 @@ class Agent:
 
     @staticmethod
     def distance_to_line_segment(p, a, b):
-        """Compute distance from point p to line segment ab."""
         a = np.array(a)
         b = np.array(b)
         ap = p - a
@@ -101,19 +99,13 @@ class Agent:
         if self.has_exited:
             return
 
-        # 🔁 Dynamically choose closest goal on exit
+        # Dynamically choose closest goal on exit
         exit_goals = environment.get_exit_goals(num_points=7)
         self.goal = min(exit_goals, key=lambda g: np.linalg.norm(self.position - g))
-
-        active_agents = [a for a in agents if not a.has_exited]
-        is_alone = len(active_agents) == 1
 
         f_goal = self.compute_goal_force()
         f_agents = self.compute_agent_repulsion(agents)
         f_walls = self.compute_wall_repulsion(environment)
-
-        if is_alone:
-            f_goal *= 4.0
 
         total_force = f_goal + f_agents + f_walls
         acceleration = total_force

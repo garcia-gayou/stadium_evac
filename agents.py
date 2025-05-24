@@ -1,10 +1,10 @@
 import numpy as np
 
 class Agent:
-    def __init__(self, x, y, goal, radius=0.5, desired_speed=1.0, tau=0.3, pushover=None):
+    def __init__(self, x, y, goal=None, radius=0.5, desired_speed=1.0, tau=0.3, pushover=None):
         self.position = np.array([x, y], dtype=float)
         self.velocity = np.zeros(2)
-        self.goal = np.array(goal, dtype=float)
+        self.goal = np.array(goal) if goal is not None else np.zeros(2)
         self.radius = radius
         self.desired_speed = desired_speed
         self.tau = tau
@@ -49,7 +49,7 @@ class Agent:
             force += self.pushover * 2.0 * repulsion
         return force
 
-    def compute_wall_repulsion(self, environment, A=5, B=0.5):
+    def compute_wall_repulsion(self, environment, A=5, B=0.5, decay_scale=1.0):
         force = np.zeros(2)
         for wall in environment.walls:
             closest_point = np.clip(self.position, wall[0], wall[1])
@@ -58,18 +58,36 @@ class Agent:
             if d_iw < 1e-5:
                 continue
             n_iw = d_iw_vec / d_iw
-            repulsion = A * np.exp((self.radius - d_iw) / B) * n_iw
+
+            # ✨ Fade out near exits
+            min_exit_dist = min(
+                self.distance_to_line_segment(closest_point, e0, e1)
+                for (e0, e1) in environment.exits
+            ) if environment.exits else float('inf')
+
+            decay = np.exp(-min_exit_dist / decay_scale)  # 0 near exits, 1 far
+            strength = A * np.exp((self.radius - d_iw) / B)
+            repulsion = strength * n_iw * (1 - decay)
             force += repulsion
         return force
 
+    @staticmethod
+    def distance_to_line_segment(p, a, b):
+        """Compute distance from point p to line segment ab."""
+        a = np.array(a)
+        b = np.array(b)
+        ap = p - a
+        ab = b - a
+        t = np.clip(np.dot(ap, ab) / np.dot(ab, ab), 0, 1)
+        closest = a + t * ab
+        return np.linalg.norm(p - closest)
+
     def check_patience(self, threshold=0.05):
         displacement = np.linalg.norm(self.position - self.last_position)
-
         if displacement < threshold:
             self.frustration += 1
         else:
             self.frustration = max(self.frustration - 0.5, 0)
-
         self.last_position = np.copy(self.position)
 
         if self.frustration > self.patience:
@@ -77,12 +95,15 @@ class Agent:
             distance = np.linalg.norm(direction)
             if distance > 1e-5:
                 direction /= distance
-                self.velocity += direction * 0.8  # assertive burst
-                # Do NOT reset frustration — let it decay naturally
+                self.velocity += direction * 0.8
 
     def step(self, agents, environment, dt=0.1):
         if self.has_exited:
             return
+
+        # 🔁 Dynamically choose closest goal on exit
+        exit_goals = environment.get_exit_goals(num_points=7)
+        self.goal = min(exit_goals, key=lambda g: np.linalg.norm(self.position - g))
 
         active_agents = [a for a in agents if not a.has_exited]
         is_alone = len(active_agents) == 1

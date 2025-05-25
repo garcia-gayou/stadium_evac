@@ -99,8 +99,18 @@ class Agent:
         if self.has_exited:
             return
 
-        # 🚪 Choose goal along door with wall penalty
         exit_goals = environment.get_exit_goals(num_points=7)
+
+        # Agents should not choose exits that are on the other side of the middle wall
+        if self.position[1] > 20:
+            # Agent is on upper side — exclude bottom exit
+            filtered_goals = [g for g in exit_goals if g[1] >= 20]
+        else:
+            # Agent is on lower side — exclude upper exits
+            filtered_goals = [g for g in exit_goals if g[1] <= 20]
+
+        # If no filtered goals remain, fallback to all (just in case)
+        filtered_goals = filtered_goals if filtered_goals else exit_goals
 
         def goal_score(g):
             dist = np.linalg.norm(self.position - g)
@@ -108,10 +118,10 @@ class Agent:
                 self.distance_to_line_segment(g, w0, w1)
                 for (w0, w1) in environment.walls
             )
-            penalty = 0.5 if wall_dist < 0.5 else 0.0  # steer away from edges
+            penalty = 0.5 if wall_dist < 0.5 else 0.0  # steer away from walls
             return dist + penalty
 
-        self.goal = min(exit_goals, key=goal_score)
+        self.goal = min(filtered_goals, key=goal_score)
 
         f_goal = self.compute_goal_force()
         f_agents = self.compute_agent_repulsion(agents)

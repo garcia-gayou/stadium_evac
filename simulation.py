@@ -8,7 +8,7 @@ class Simulation:
     def __init__(self, num_agents=1000):
         self.env = Environment()
         self.agent_positions = generate_agent_positions(self.env, num_agents // 2, num_agents // 2)
-        print(f"🎯 Requested: {num_agents} — Actually generated: {len(self.agent_positions)}")
+        print(f"Requested: {num_agents} — Actually generated: {len(self.agent_positions)}")
         self.agents = [Agent(x, y) for (x, y) in self.agent_positions]
         self.finished = False
 
@@ -16,19 +16,29 @@ class Simulation:
         if self.finished:
             return
 
-        # Mark agents as exited if needed
+        # Mark agents as exited
         for agent in self.agents:
-            if not agent.has_exited:
-                x, y = agent.position
-                for (x0, y0), (x1, y1) in self.env.exits:
-                    if (x0 == x1 and abs(x - x0) < 0.15 and min(y0, y1) <= y <= max(y0, y1)) or \
-                    (y0 == y1 and abs(y - y0) < 0.15 and min(x0, x1) <= x <= max(x0, x1)):
-                        agent.has_exited = True
-                        break
+            if agent.has_exited:
+                continue
+            x, y = agent.position
+            for (x0, y0), (x1, y1) in self.env.exits:
+                if (x0 == x1 and abs(x - x0) < 0.15 and min(y0, y1) <= y <= max(y0, y1)) or \
+                   (y0 == y1 and abs(y - y0) < 0.15 and min(x0, x1) <= x <= max(x0, x1)):
+                    agent.has_exited = True
+                    break
 
-        # Prepare for neighbor lookups
+        # Get active agents
         active_agents = [a for a in self.agents if not a.has_exited]
+        if len(active_agents) == 0:
+            self.finished = True
+            return
+
+        # Prepare for KDTree neighbor lookup
         positions = np.array([a.position for a in active_agents])
+        if positions.ndim != 2 or positions.shape[1] != 2:
+            self.finished = True
+            return
+
         tree = KDTree(positions)
 
         # Precompute neighbors for all agents

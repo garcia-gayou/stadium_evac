@@ -11,7 +11,7 @@ def generate_agent_positions(env, num_agents_bottom=100, num_agents_top=100):
     def is_in_stage(x, y):
         return (env.stage_left_x <= x <= env.stage_right_x) and (env.stage_front_y <= y <= env.stage_back_y)
 
-    def rejection_sample(n, x_range, y_range, density_func, mask_func=None, max_attempts=10000):
+    def rejection_sample(n, x_range, y_range, density_func, mask_func=None, max_attempts=20000):
         samples = []
         attempts = 0
         while len(samples) < n and attempts < max_attempts:

@@ -3,6 +3,7 @@ import sys
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from environment import Environment
+import numpy as np
 
 # Load simulation data
 run_id = sys.argv[1] if len(sys.argv) > 1 else "default"
@@ -37,7 +38,7 @@ def update(frame):
         x, y = zip(*positions)
         scat.set_offsets(list(zip(x, y)))
     else:
-        scat.set_offsets([])
+        scat.set_offsets(np.empty((0, 2)))
     return scat,
 
 ani = FuncAnimation(fig, update, frames=len(positions_per_frame), interval=50, blit=True)

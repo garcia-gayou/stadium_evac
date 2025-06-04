@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.spatial import KDTree
 
 class Agent:
     def __init__(self, x, y, goal=None, radius=0.5, desired_speed=1.0, tau=0.3, pushover=None):
@@ -26,11 +27,9 @@ class Agent:
         base_force = (desired_velocity - self.velocity) / self.tau
         return base_force * (1 + (1 - self.pushover))
 
-    def compute_agent_repulsion(self, agents, A=20, B=0.5):
+    def compute_agent_repulsion(self, neighbors, A=20, B=0.5):
         force = np.zeros(2)
-        for other in agents:
-            if other is self or other.has_exited:
-                continue
+        for other in neighbors:
             d_vec = self.position - other.position
             d = np.linalg.norm(d_vec)
             if d < 1e-5:
@@ -78,7 +77,7 @@ class Agent:
             if d > 1e-5:
                 self.velocity += (dir / d) * 0.8
 
-    def step(self, agents, env, dt=0.1):
+    def step(self, neighbors, env, dt=0.1):
         if self.has_exited:
             return
 
@@ -102,7 +101,7 @@ class Agent:
         self.goal = min(exit_options, key=goal_score)
 
         f_goal = self.compute_goal_force()
-        f_agents = self.compute_agent_repulsion(agents)
+        f_agents = self.compute_agent_repulsion(neighbors)
         f_walls = self.compute_wall_repulsion(env)
 
         total_force = f_goal + f_agents + f_walls

@@ -1,58 +1,69 @@
-# environment.py
 import numpy as np
 
 class Environment:
     def __init__(self):
-        self.width = 40
-        self.height = 40
+        # Stadium dimensions in meters
+        self.width = 130     # meters
+        self.height = 100    # meters
 
-        # Define multiple exits (e.g., bottom center, top left, top right)
+        # Key layout dimensions (all in meters)
+        self.exit_width = 3
+        self.side_exit_height = 10
+        self.divider_y = 50   # Midway horizontal divider (e.g., fence)
+        self.stage_width = 32
+        self.stage_front_y = 90  # Stage front (audience side)
+        self.stage_back_y = self.height
+        self.stage_left_x = (self.width - self.stage_width) / 2
+        self.stage_right_x = (self.width + self.stage_width) / 2
+
+        # Exits
         self.exits = [
-            ((18, 0), (22, 0)),     # bottom center
-            ((0, 30), (0, 34)),     # left middle
-            ((40, 30), (40, 34)),   # right middle
+            # Bottom center
+            ((self.width / 2 - self.exit_width / 2, 0),
+             (self.width / 2 + self.exit_width / 2, 0)),
+            # Left middle
+            ((0, 75), (0, 85)),
+            # Right middle
+            ((self.width, 75), (self.width, 85)),
         ]
 
-        # Correct walls for Estadio GNP style layout
+        # Walls (outer boundary, divider, stage structure)
         self.walls = [
-            # Bottom wall (with central exit gap)
-            ((0, 0), (18, 0)),
-            ((22, 0), (40, 0)),
+            # Bottom wall (excluding center exit)
+            ((0, 0), (self.width / 2 - self.exit_width / 2, 0)),
+            ((self.width / 2 + self.exit_width / 2, 0), (self.width, 0)),
 
-            # Left wall (with middle exit gap)
-            ((0, 0), (0, 30)),
-            ((0, 34), (0, 40)),
+            # Left wall (excluding exit gap)
+            ((0, 0), (0, 75)),
+            ((0, 85), (0, self.height)),
 
-            # Right wall (with middle exit gap)
-            ((40, 0), (40, 30)),
-            ((40, 34), (40, 40)),
+            # Right wall (excluding exit gap)
+            ((self.width, 0), (self.width, 75)),
+            ((self.width, 85), (self.width, self.height)),
 
             # Top wall
-            ((0, 40), (40, 40)),
+            ((0, self.height), (self.width, self.height)),
 
-            # Middle horizontal divider
-            ((0, 20), (40, 20)),
+            # Divider fence
+            ((0, self.divider_y), (self.width, self.divider_y)),
 
-            # Scenario walls (at the top center)
-            ((15, 40), (15, 35)),
-            ((15, 35), (25, 35)),
-            ((25, 35), (25, 40)),
-
-
+            # Stage (U-shape)
+            ((self.stage_left_x, self.stage_back_y), (self.stage_left_x, self.stage_front_y)),
+            ((self.stage_left_x, self.stage_front_y), (self.stage_right_x, self.stage_front_y)),
+            ((self.stage_right_x, self.stage_front_y), (self.stage_right_x, self.stage_back_y)),
         ]
-    
+
     def get_exit_goals(self, num_points=5, margin_ratio=0.1):
-        """Return evenly spaced goal points along each exit line, skipping edge margins."""
+        """Return evenly spaced goal points along each exit, skipping edge margins."""
         goals = []
         for (x1, y1), (x2, y2) in self.exits:
-            length = np.linalg.norm(np.array([x2 - x1, y2 - y1]))
+            length = np.linalg.norm([x2 - x1, y2 - y1])
             margin = margin_ratio * length
-
             vec = np.array([x2 - x1, y2 - y1])
-            vec_unit = vec / np.linalg.norm(vec)
+            unit_vec = vec / np.linalg.norm(vec)
 
-            start = np.array([x1, y1]) + vec_unit * margin
-            end = np.array([x2, y2]) - vec_unit * margin
+            start = np.array([x1, y1]) + unit_vec * margin
+            end = np.array([x2, y2]) - unit_vec * margin
 
             for i in range(num_points):
                 t = i / (num_points - 1)

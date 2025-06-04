@@ -5,7 +5,7 @@ from agent_distribution import generate_agent_positions
 from scipy.spatial import KDTree
 
 class Simulation:
-    def __init__(self, num_agents=1000):
+    def __init__(self, num_agents=20000):
         self.env = Environment()
         self.agent_positions = generate_agent_positions(self.env, num_agents // 2, num_agents // 2)
         print(f"Requested: {num_agents} — Actually generated: {len(self.agent_positions)}")
@@ -33,23 +33,21 @@ class Simulation:
             self.finished = True
             return
 
-        # Prepare for KDTree neighbor lookup
         positions = np.array([a.position for a in active_agents])
         if positions.ndim != 2 or positions.shape[1] != 2:
             self.finished = True
             return
 
         tree = KDTree(positions)
+        pairs = tree.query_pairs(r=3.0)
+        neighbor_map = {i: [] for i in range(len(active_agents))}
+        for i, j in pairs:
+            neighbor_map[i].append(j)
+            neighbor_map[j].append(i)
 
-        # Precompute neighbors for all agents
-        neighbor_map = {}
         for i, agent in enumerate(active_agents):
-            idxs = tree.query_ball_point(agent.position, r=3.0)
-            neighbor_map[agent] = [active_agents[j] for j in idxs if active_agents[j] is not agent]
-
-        # Step with neighbors
-        for agent in active_agents:
-            agent.step(neighbors=neighbor_map[agent], env=self.env)
+            neighbors = [active_agents[j] for j in neighbor_map[i]]
+            agent.step(neighbors=neighbors, env=self.env)
 
         if all(agent.has_exited for agent in self.agents):
             self.finished = True

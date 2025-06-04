@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.spatial import KDTree
 
 class Agent:
     def __init__(self, x, y, goal=None, radius=0.5, desired_speed=1.0, tau=0.3, pushover=None):
@@ -10,11 +9,33 @@ class Agent:
         self.desired_speed = desired_speed
         self.tau = tau
         self.has_exited = False
+        self.repulsion_override = np.zeros(2)
 
         self.pushover = pushover if pushover is not None else np.clip(np.random.normal(0.5, 0.2), 0, 1)
         self.patience = np.random.normal(loc=self.pushover * 50, scale=5)
         self.frustration = 0
         self.last_position = np.copy(self.position)
+
+    def choose_main_exit(self, env):
+        """Choose which exit to use once, and store its discretized goals."""
+        divider_y = env.height / 2
+        side = "top" if self.position[1] > divider_y else "bottom"
+
+        def is_reachable(exit_center):
+            if side == "top":
+                return exit_center[1] > divider_y
+            else:
+                return exit_center[1] < divider_y
+
+        # Find closest reachable exit center
+        reachable = [(exit, center) for exit, center in env.exit_centers.items() if is_reachable(center)]
+        if not reachable:
+            exit, _ = min(env.exit_centers.items(), key=lambda ec: np.linalg.norm(self.position - ec[1]))
+        else:
+            exit, _ = min(reachable, key=lambda ec: np.linalg.norm(self.position - ec[1]))
+
+        self.main_exit = exit
+        self.exit_zone_points = env.exit_goals[exit]
 
     def compute_goal_force(self):
         direction = self.goal - self.position
@@ -26,19 +47,6 @@ class Agent:
         desired_velocity = (direction / distance) * self.desired_speed
         base_force = (desired_velocity - self.velocity) / self.tau
         return base_force * (1 + (1 - self.pushover))
-
-    def compute_agent_repulsion(self, neighbors, A=20, B=0.5):
-        force = np.zeros(2)
-        for other in neighbors:
-            d_vec = self.position - other.position
-            d = np.linalg.norm(d_vec)
-            if d < 1e-5:
-                continue
-            n = d_vec / d
-            r_sum = self.radius + other.radius
-            repulsion = A * np.exp((r_sum - d) / B) * n
-            force += self.pushover * 2.0 * repulsion
-        return force
 
     def compute_wall_repulsion(self, env, A=5, B=0.5, decay_scale=1.0):
         force = np.zeros(2)
@@ -71,6 +79,7 @@ class Agent:
         self.frustration += 1 if move < threshold else -0.5
         self.frustration = max(0, self.frustration)
         self.last_position = np.copy(self.position)
+
         if self.frustration > self.patience:
             dir = self.goal - self.position
             d = np.linalg.norm(dir)
@@ -81,34 +90,14 @@ class Agent:
         if self.has_exited:
             return
 
-        exit_goals = env.get_exit_goals(num_points=7)
-        divider_y = env.divider_y if hasattr(env, 'divider_y') else env.height / 2
-
-        if self.position[1] > divider_y:
-            exit_options = [g for g in exit_goals if g[1] > divider_y]
-        else:
-            exit_options = [g for g in exit_goals if g[1] < divider_y]
-        if not exit_options:
-            exit_options = exit_goals
-
-        def goal_score(g):
-            dist = np.linalg.norm(self.position - g)
-            wall_dist = min(
-                self.distance_to_line_segment(g, w0, w1) for (w0, w1) in env.walls
-            )
-            return dist + (0.5 if wall_dist < 0.5 else 0)
-
-        self.goal = min(exit_options, key=goal_score)
-
         f_goal = self.compute_goal_force()
-        f_agents = self.compute_agent_repulsion(neighbors)
         f_walls = self.compute_wall_repulsion(env)
+        f_agents = self.repulsion_override
 
-        total_force = f_goal + f_agents + f_walls
+        total_force = f_goal + f_walls + f_agents
         self.velocity += total_force * dt
         self.position += self.velocity * dt
 
         self.position[0] = np.clip(self.position[0], 0, env.width)
         self.position[1] = np.clip(self.position[1], 0, env.height)
-
         self.check_patience()

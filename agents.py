@@ -1,103 +1,184 @@
-import numpy as np
+import math
+import random
 
 class Agent:
     def __init__(self, x, y, goal=None, radius=0.5, desired_speed=1.0, tau=0.3, pushover=None):
-        self.position = np.array([x, y], dtype=float)
-        self.velocity = np.zeros(2)
-        self.goal = np.array(goal) if goal is not None else np.zeros(2)
+        self.position = [x, y]
+        self.velocity = [0.0, 0.0]
+        self.goal = goal if goal else [0.0, 0.0]
         self.radius = radius
         self.desired_speed = desired_speed
         self.tau = tau
         self.has_exited = False
-        self.repulsion_override = np.zeros(2)
-
-        self.pushover = pushover if pushover is not None else np.clip(np.random.normal(0.5, 0.2), 0, 1)
-        self.patience = np.random.normal(loc=self.pushover * 50, scale=5)
+        self.pushover = pushover if pushover is not None else min(max(random.gauss(0.5, 0.2), 0), 1)
+        self.patience = max(random.gauss(self.pushover * 50, 5), 1)
         self.frustration = 0
-        self.last_position = np.copy(self.position)
+        self.last_position = list(self.position)
+
+        self.main_exit = None
+        self.exit_options = []
 
     def choose_main_exit(self, env):
-        """Choose which exit to use once, and store its discretized goals."""
-        divider_y = env.height / 2
-        side = "top" if self.position[1] > divider_y else "bottom"
+        min_dist = float('inf')
+        chosen = None
+        for exit_data in env.exits:
+            exit_line = exit_data["points"]
+            center = env.exit_centers[exit_line]
+            if not self._can_reach(exit_line, env):
+                continue
+            dist = math.dist(self.position, center)
+            if dist < min_dist:
+                min_dist = dist
+                chosen = exit_line
+        if chosen:
+            self.main_exit = chosen
+            self.exit_options = env.exit_goals[chosen]
 
-        def is_reachable(exit_center):
-            if side == "top":
-                return exit_center[1] > divider_y
-            else:
-                return exit_center[1] < divider_y
-
-        # Find closest reachable exit center
-        reachable = [(exit, center) for exit, center in env.exit_centers.items() if is_reachable(center)]
-        if not reachable:
-            exit, _ = min(env.exit_centers.items(), key=lambda ec: np.linalg.norm(self.position - ec[1]))
-        else:
-            exit, _ = min(reachable, key=lambda ec: np.linalg.norm(self.position - ec[1]))
-
-        self.main_exit = exit
-        self.exit_zone_points = env.exit_goals[exit]
+    def update_goal(self, env):
+        if not self.exit_options:
+            return
+        best = min(self.exit_options, key=lambda g: math.dist(self.position, g))
+        self.goal = best
 
     def compute_goal_force(self):
-        direction = self.goal - self.position
-        distance = np.linalg.norm(direction)
-        if distance < 1e-5:
-            return np.zeros(2)
-        if distance < 0.3:
-            return (direction / distance) * self.desired_speed * 0.5
-        desired_velocity = (direction / distance) * self.desired_speed
-        base_force = (desired_velocity - self.velocity) / self.tau
-        return base_force * (1 + (1 - self.pushover))
+        dx = self.goal[0] - self.position[0]
+        dy = self.goal[1] - self.position[1]
+        dist = math.sqrt(dx * dx + dy * dy)
+        if dist < 1e-5:
+            return (0.0, 0.0)
+        desired_vx = (dx / dist) * self.desired_speed
+        desired_vy = (dy / dist) * self.desired_speed
+        fx = (desired_vx - self.velocity[0]) / self.tau
+        fy = (desired_vy - self.velocity[1]) / self.tau
+        return fx * (1 + (1 - self.pushover)), fy * (1 + (1 - self.pushover))
+
+    def compute_agent_repulsion(self, neighbors, A=20, B=0.5):
+        fx, fy = 0.0, 0.0
+        for other in neighbors:
+            dx = self.position[0] - other.position[0]
+            dy = self.position[1] - other.position[1]
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist < 1e-5:
+                continue
+            n_x, n_y = dx / dist, dy / dist
+            r_sum = self.radius + other.radius
+            coeff = A * math.exp((r_sum - dist) / B)
+            fx += self.pushover * 2.0 * coeff * n_x
+            fy += self.pushover * 2.0 * coeff * n_y
+        return fx, fy
 
     def compute_wall_repulsion(self, env, A=5, B=0.5, decay_scale=1.0):
-        force = np.zeros(2)
+        fx, fy = 0.0, 0.0
+
         for wall in env.walls:
-            closest = np.clip(self.position, wall[0], wall[1])
-            d_vec = self.position - closest
-            d = np.linalg.norm(d_vec)
-            if d < 1e-5:
+            # Skip walls that are close to an exit
+            skip = False
+            for exit_data in env.exits:
+                ex0, ex1 = exit_data["points"]
+                dist_to_exit = self._segment_to_segment_distance(wall[0], wall[1], ex0, ex1)
+                if dist_to_exit < 1.0:  # 1 meter threshold to ignore exit-adjacent walls
+                    skip = True
+                    break
+            if skip:
                 continue
-            n = d_vec / d
-            min_exit_dist = min(
-                self.distance_to_line_segment(closest, e0, e1) for (e0, e1) in env.exits
-            ) if env.exits else float('inf')
-            decay = np.exp(-min_exit_dist / decay_scale)
-            strength = A * np.exp((self.radius - d) / B)
-            force += strength * n * (1 - decay)
-        return force
 
-    @staticmethod
-    def distance_to_line_segment(p, a, b):
-        a, b = np.array(a), np.array(b)
-        ap = p - a
-        ab = b - a
-        t = np.clip(np.dot(ap, ab) / np.dot(ab, ab), 0, 1)
-        closest = a + t * ab
-        return np.linalg.norm(p - closest)
+            # Normal repulsion from wall
+            closest = [
+                min(max(self.position[0], min(wall[0][0], wall[1][0])), max(wall[0][0], wall[1][0])),
+                min(max(self.position[1], min(wall[0][1], wall[1][1])), max(wall[0][1], wall[1][1]))
+            ]
+            dx = self.position[0] - closest[0]
+            dy = self.position[1] - closest[1]
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist < 1e-5:
+                continue
+            decay = math.exp(-dist / decay_scale)
+            strength = A * math.exp((self.radius - dist) / B)
+            fx += strength * (dx / dist) * (1 - decay)
+            fy += strength * (dy / dist) * (1 - decay)
 
-    def check_patience(self, threshold=0.05):
-        move = np.linalg.norm(self.position - self.last_position)
-        self.frustration += 1 if move < threshold else -0.5
-        self.frustration = max(0, self.frustration)
-        self.last_position = np.copy(self.position)
+        return fx, fy
+
+    def step_full(self, env, neighbors, dt=0.1):
+        new_agent = self._clone()
+        new_agent.update_goal(env)
+
+        gx, gy = new_agent.compute_goal_force()
+        ax, ay = new_agent.compute_agent_repulsion(neighbors)
+        wx, wy = new_agent.compute_wall_repulsion(env)
+
+        fx = gx + ax + wx
+        fy = gy + ay + wy
+
+        new_agent.velocity[0] += fx * dt
+        new_agent.velocity[1] += fy * dt
+        new_agent.position[0] += new_agent.velocity[0] * dt
+        new_agent.position[1] += new_agent.velocity[1] * dt
+
+        new_agent._check_patience()
+        return new_agent
+
+    def update_state_from(self, updated):
+        self.position = updated.position
+        self.velocity = updated.velocity
+        self.last_position = updated.last_position
+        self.frustration = updated.frustration
+        self.goal = updated.goal
+
+    def _clone(self):
+        clone = Agent(*self.position)
+        clone.velocity = list(self.velocity)
+        clone.goal = list(self.goal)
+        clone.radius = self.radius
+        clone.desired_speed = self.desired_speed
+        clone.tau = self.tau
+        clone.pushover = self.pushover
+        clone.patience = self.patience
+        clone.frustration = self.frustration
+        clone.last_position = list(self.last_position)
+        clone.main_exit = self.main_exit
+        clone.exit_options = list(self.exit_options)
+        return clone
+
+    def _check_patience(self, threshold=0.05):
+        dx = self.position[0] - self.last_position[0]
+        dy = self.position[1] - self.last_position[1]
+        move = math.sqrt(dx * dx + dy * dy)
+        if move < threshold:
+            self.frustration += 1
+        else:
+            self.frustration = max(0, self.frustration - 0.5)
+        self.last_position = list(self.position)
 
         if self.frustration > self.patience:
-            dir = self.goal - self.position
-            d = np.linalg.norm(dir)
-            if d > 1e-5:
-                self.velocity += (dir / d) * 0.8
+            dx = self.goal[0] - self.position[0]
+            dy = self.goal[1] - self.position[1]
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist > 1e-5:
+                self.velocity[0] += (dx / dist) * 0.8
+                self.velocity[1] += (dy / dist) * 0.8
 
-    def step(self, neighbors, env, dt=0.1):
-        if self.has_exited:
-            return
+    def _can_reach(self, exit_line, env):
+        y = self.position[1]
+        ey0, ey1 = exit_line[0][1], exit_line[1][1]
+        divider_y = env.divider_y
+        return (y <= divider_y and ey0 <= divider_y and ey1 <= divider_y) or \
+               (y > divider_y and ey0 > divider_y and ey1 > divider_y)
+    
+    def _segment_to_segment_distance(self, a0, a1, b0, b1):
+        # Compute the shortest distance between two segments (a and b)
+        def point_segment_dist(p, s0, s1):
+            dx, dy = s1[0] - s0[0], s1[1] - s0[1]
+            if dx == dy == 0:
+                return math.dist(p, s0)
+            t = max(0, min(1, ((p[0] - s0[0]) * dx + (p[1] - s0[1]) * dy) / (dx * dx + dy * dy)))
+            proj = (s0[0] + t * dx, s0[1] + t * dy)
+            return math.dist(p, proj)
 
-        f_goal = self.compute_goal_force()
-        f_walls = self.compute_wall_repulsion(env)
-        f_agents = self.repulsion_override
-
-        total_force = f_goal + f_walls + f_agents
-        self.velocity += total_force * dt
-        self.position += self.velocity * dt
-
-        self.position[0] = np.clip(self.position[0], 0, env.width)
-        self.position[1] = np.clip(self.position[1], 0, env.height)
-        self.check_patience()
+        # Check all endpoints of both segments against the opposite segment
+        return min(
+            point_segment_dist(a0, b0, b1),
+            point_segment_dist(a1, b0, b1),
+            point_segment_dist(b0, a0, a1),
+            point_segment_dist(b1, a0, a1)
+        )

@@ -1,33 +1,33 @@
-import pickle
 import os
 import sys
+import pickle
 from simulation import Simulation
+from multiprocessing import freeze_support
 
-# Accept a run name from the command line (optional)
-run_id = sys.argv[1] if len(sys.argv) > 1 else "default"
+def run_simulation(name="simulation", num_agents=1000, max_frames=1000):
+    sim = Simulation(num_agents=num_agents)
+    output_dir = os.path.join("sim_outputs", name)
+    os.makedirs(output_dir, exist_ok=True)
 
-# Ensure the output directory exists
-output_dir = "precomputed_simulation"
-os.makedirs(output_dir, exist_ok=True)
+    frame = 0
+    while not sim.is_finished() and frame < max_frames:
+        sim.update()
 
-# Set file path
-output_path = os.path.join(output_dir, f"positions_{run_id}.pkl")
+        # Get both positions and pushover values
+        data = sim.get_active_positions_and_pushovers()
+        with open(os.path.join(output_dir, f"{frame:04d}.pkl"), "wb") as f:
+            pickle.dump(data, f)
 
-# Run and store simulation frames
-MAX_FRAMES = 1000
-sim = Simulation(num_agents=1000)
-positions_per_frame = []
+        frame += 1
+        if frame % 5 == 0:
+            print(f"Frame {frame} complete...")
 
-for i in range(MAX_FRAMES):
-    sim.update()
-    positions = [tuple(agent.position) for agent in sim.agents if not agent.has_exited]
-    positions_per_frame.append(positions)
+    print(f"✅ Done! Total frames simulated: {frame}")
 
-    if i % 5 == 0:
-        print(f"Saved frame {i}/{MAX_FRAMES}")
+if __name__ == "__main__":
+    freeze_support()
 
-# Save the data
-with open(output_path, "wb") as f:
-    pickle.dump(positions_per_frame, f)
+    name = sys.argv[1] if len(sys.argv) > 1 else "simulation"
+    num_agents = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
 
-print(f"✅ Simulation saved to {output_path}")
+    run_simulation(name=name, num_agents=num_agents)

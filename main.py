@@ -1,4 +1,6 @@
-from simulation import run_simulation
+from simulation import Simulation
 
 if __name__ == "__main__":
-    run_simulation()
+    sim = Simulation(num_agents=1000)
+    while not sim.is_finished():
+        sim.update()

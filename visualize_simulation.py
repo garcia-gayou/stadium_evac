@@ -1,45 +1,65 @@
-import pickle
+import os
 import sys
+import pickle
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+import matplotlib.animation as animation
 from environment import Environment
 import numpy as np
 
-# Load simulation data
-run_id = sys.argv[1] if len(sys.argv) > 1 else "default"
-data_path = f"precomputed_simulation/positions_{run_id}.pkl"
+def visualize(name="simulation"):
+    path = os.path.join("sim_outputs", name)
+    if not os.path.exists(path):
+        print(f"Folder '{path}' does not exist.")
+        return
 
-with open(data_path, "rb") as f:
-    positions_per_frame = pickle.load(f)
+    files = sorted(f for f in os.listdir(path) if f.endswith(".pkl"))
+    if not files:
+        print(f"No simulation frames found in '{path}'.")
+        return
 
-# Set up plot and environment
-env = Environment()
-fig, ax = plt.subplots()
-scat = ax.scatter([], [], s=5)
+    # Load frames of (position, pushover)
+    frames = []
+    for f in files:
+        with open(os.path.join(path, f), "rb") as file:
+            frames.append(pickle.load(file))  # list of (pos, pushover)
 
-ax.set_xlim(0, env.width)
-ax.set_ylim(0, env.height)
-ax.set_title(f"Simulation Playback — {run_id}")
+    # Setup environment for drawing walls/exits
+    env = Environment()
 
-# Draw walls
-for wall in env.walls:
-    (x1, y1), (x2, y2) = wall
-    ax.plot([x1, x2], [y1, y2], color="black", linewidth=1.5)
+    fig, ax = plt.subplots(figsize=(10, 8))
+    scat = ax.scatter([], [], s=10)
+    ax.set_xlim(0, env.width)
+    ax.set_ylim(0, env.height)
+    ax.set_title(f"Evacuation Simulation: {name}")
+    cmap = plt.get_cmap("coolwarm")
 
-# Draw exits
-for ex in env.exits:
-    (x1, y1), (x2, y2) = ex
-    ax.plot([x1, x2], [y1, y2], color="green", linewidth=3)
+    # Draw walls
+    for wall in env.walls:
+        ax.plot([wall[0][0], wall[1][0]], [wall[0][1], wall[1][1]], color='black', linewidth=2)
 
-# Animation
-def update(frame):
-    positions = positions_per_frame[frame]
-    if positions:
-        x, y = zip(*positions)
-        scat.set_offsets(list(zip(x, y)))
-    else:
-        scat.set_offsets(np.empty((0, 2)))
-    return scat,
+    # Draw exits with thicker lines
+    for exit_data in env.exits:
+        (x0, y0), (x1, y1) = exit_data["points"]
+        ax.plot([x0, x1], [y0, y1], color='green', linewidth=8, solid_capstyle='round')
+        
+    def update(i):
+        data = frames[i]
+        if not data:
+            scat.set_offsets(np.empty((0, 2)))
+            scat.set_array(np.array([]))
+            return scat,
 
-ani = FuncAnimation(fig, update, frames=len(positions_per_frame), interval=50, blit=True)
-plt.show()
+        positions = [p for p, _ in data]
+        pushovers = [p for _, p in data]
+        norm_pushovers = [min(max(p, 0.0), 1.0) for p in pushovers]  # Ensure [0, 1] range
+
+        scat.set_offsets(np.array(positions))
+        scat.set_color([cmap(1 - p) for p in norm_pushovers])
+        return scat,
+
+    ani = animation.FuncAnimation(fig, update, frames=len(frames), interval=100, blit=True)
+    plt.show()
+
+if __name__ == "__main__":
+    name = sys.argv[1] if len(sys.argv) > 1 else "simulation"
+    visualize(name)

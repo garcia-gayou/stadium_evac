@@ -48,8 +48,29 @@ def visualize(name="simulation"):
     else:
         print("⚠️ No remaining_counts.pkl found. Skipping time-vs-people-left plot.")
 
+    exit_rate_path = os.path.join(path, "exit_rate.pkl")
+    if os.path.exists(exit_rate_path):
+        with open(exit_rate_path, "rb") as f:
+            exit_rate = pickle.load(f)
+
+        time_axis = np.arange(len(exit_rate)) * 0.1
+        plt.figure()
+        plt.plot(time_axis, exit_rate, label="People Exiting per Second", color='green')
+        plt.xlabel("Time (s)")
+        plt.ylabel("Exit Rate (agents/s)")
+        plt.title("Exit Throughput Over Time")
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("⚠️ No exit_rate.pkl found. Skipping exit rate plot.")
+
     # --- Density over time ---
     density_over_time = []
+    mean_densities = []
+    perc95_densities = []
+
 
     for frame_data in frames:
         if not frame_data:
@@ -65,17 +86,26 @@ def visualize(name="simulation"):
             range=[[0, env.width], [0, env.height]]
         )
 
-        max_density = H.max()
+        flat = H.flatten()
+        max_density = flat.max()
+        mean_density = flat.mean()
+        perc95_density = np.percentile(flat, 95)
+
         density_over_time.append(max_density)
+        mean_densities.append(mean_density)
+        perc95_densities.append(perc95_density)
+
 
     dt = 0.1
-    time_axis = np.arange(len(density_over_time)) * dt
+    time_axis = np.arange(len(mean_densities)) * dt
 
     plt.figure()
-    plt.plot(time_axis, density_over_time, label="Max Local Density", color='red')
+    plt.plot(time_axis, mean_densities, label="Mean Density", color='blue')
+    plt.plot(time_axis, perc95_densities, label="95th Percentile Density", color='orange')
+    plt.plot(time_axis, density_over_time[:len(time_axis)], label="Max Local Density", color='red')
     plt.xlabel("Time (s)")
-    plt.ylabel("Max People per m²")
-    plt.title("Maximum Local Density Over Time")
+    plt.ylabel("Density (people/m²)")
+    plt.title("Crowd Density Statistics Over Time")
     plt.grid(True)
     plt.legend()
     plt.tight_layout()

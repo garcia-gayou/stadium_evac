@@ -26,9 +26,19 @@ def run_simulation(name="simulation", num_agents=1000, max_frames=1000):
         frame += 1
         if frame % 5 == 0:
             print(f"Frame {frame} complete...")
-            
+
     with open(os.path.join(output_dir, "remaining_counts.pkl"), "wb") as f:
         pickle.dump(remaining_counts, f)
+    # Compute people exiting per frame
+    exit_rate = []
+    for i in range(1, len(remaining_counts)):
+        exited = remaining_counts[i - 1] - remaining_counts[i]
+        exit_rate.append(exited)
+
+    # Save exit rate
+    with open(os.path.join(output_dir, "exit_rate.pkl"), "wb") as f:
+        pickle.dump(exit_rate, f)
+
     print(f"✅ Done! Total frames simulated: {frame}")
     return frame
 

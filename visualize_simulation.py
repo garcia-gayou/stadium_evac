@@ -111,6 +111,25 @@ def visualize(name="simulation"):
     plt.tight_layout()
     plt.show()
 
+    crush_index_path = os.path.join(path, "crush_index.pkl")
+    if os.path.exists(crush_index_path):
+        with open(crush_index_path, "rb") as f:
+            crush_indices = pickle.load(f)
+
+        time_axis = np.arange(len(crush_indices)) * 0.1
+        plt.figure()
+        plt.plot(time_axis, crush_indices, label="Crush Index", color='purple')
+        plt.xlabel("Time (s)")
+        plt.ylabel("Crush Index")
+        plt.title("Crush Risk Over Time")
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("⚠️ No crush_index.pkl found.")
+
+
     fig, ax = plt.subplots(figsize=(10, 8))
     scat = ax.scatter([], [], s=10)
     ax.set_xlim(0, env.width)

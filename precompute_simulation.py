@@ -11,21 +11,25 @@ def run_simulation(name="simulation", num_agents=1000, max_frames=1000):
 
     frame = 0
     remaining_counts = []
+    crush_indices = []
+
     while not sim.is_finished() and frame < max_frames:
         sim.update()
-
-        # Get both positions and pushover values
         data = sim.get_active_positions_and_pushovers()
-
-        # Track how many people are still active
         remaining_counts.append(len(data))
-
+        
+        # Store crush index
+        crush_indices.append(sim.compute_crush_index())
+        
         with open(os.path.join(output_dir, f"{frame:04d}.pkl"), "wb") as f:
             pickle.dump(data, f)
-
+        
         frame += 1
         if frame % 5 == 0:
             print(f"Frame {frame} complete...")
+
+    with open(os.path.join(output_dir, "crush_index.pkl"), "wb") as f:
+        pickle.dump(crush_indices, f)
 
     with open(os.path.join(output_dir, "remaining_counts.pkl"), "wb") as f:
         pickle.dump(remaining_counts, f)

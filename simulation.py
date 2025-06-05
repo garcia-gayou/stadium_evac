@@ -4,6 +4,7 @@ from agent_distribution import generate_agent_positions
 from agents import Agent
 from joblib import Parallel, delayed
 from scipy.spatial import KDTree
+import numpy as np
 
 class Simulation:
     def __init__(self, num_agents=1000):
@@ -68,3 +69,21 @@ class Simulation:
 
     def is_finished(self):
         return self.finished
+    
+    def compute_crush_index(self):
+        active = [a for a in self.agents if not a.has_exited]
+        if not active:
+            return 0.0
+
+        positions = np.array([a.position for a in active])
+        pushovers = np.array([a.pushover for a in active])
+        
+        # 1m x 1m grid bins
+        H, _, _ = np.histogram2d(
+            positions[:, 0], positions[:, 1],
+            bins=(self.env.width, self.env.height),
+            range=[[0, self.env.width], [0, self.env.height]]
+        )
+        max_density = H.max()
+        avg_pushover = pushovers.mean()
+        return max_density * avg_pushover

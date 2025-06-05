@@ -9,7 +9,9 @@ class Simulation:
     def __init__(self, num_agents=1000):
         self.env = Environment()
         self.env.prepare_exit_goals()
-        self.agent_positions = generate_agent_positions(self.env, num_agents // 2, num_agents // 2)
+        self.agent_positions = generate_agent_positions(
+            self.env, num_agents // 2, num_agents // 2
+        )
         print(f"Requested: {num_agents} — Actually generated: {len(self.agent_positions)}")
         self.agents = [Agent(x, y) for x, y in self.agent_positions]
         for agent in self.agents:
@@ -45,17 +47,17 @@ class Simulation:
         for i, agent in enumerate(active_agents):
             agent.update_state_from(updated_agents[i])
 
-        # Mark exited agents
+        # Mark exited agents with improved 0.5m margin
         for agent in active_agents:
             x, y = agent.position
             for exit_data in self.env.exits:
                 (x0, y0), (x1, y1) = exit_data["points"]
-                # Check horizontal exit
-                if y0 == y1 and abs(y - y0) < 0.15 and min(x0, x1) <= x <= max(x0, x1):
+                # Exit is vertical
+                if x0 == x1 and abs(x - x0) < 0.5 and min(y0, y1) <= y <= max(y0, y1):
                     agent.has_exited = True
                     break
-                # Check vertical exit
-                elif x0 == x1 and abs(x - x0) < 0.15 and min(y0, y1) <= y <= max(y0, y1):
+                # Exit is horizontal
+                elif y0 == y1 and abs(y - y0) < 0.5 and min(x0, x1) <= x <= max(x0, x1):
                     agent.has_exited = True
                     break
 
@@ -63,6 +65,6 @@ class Simulation:
 
     def get_active_positions_and_pushovers(self):
         return [(agent.position[:], agent.pushover) for agent in self.agents if not agent.has_exited]
-    
+
     def is_finished(self):
         return self.finished

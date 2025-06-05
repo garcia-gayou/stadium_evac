@@ -2,7 +2,7 @@ import math
 import random
 
 class Agent:
-    def __init__(self, x, y, goal=None, radius=0.5, desired_speed=1.0, tau=0.3, pushover=None):
+    def __init__(self, x, y, goal=None, radius=0.5, desired_speed=1.2, tau=0.3, pushover=None):
         self.position = [x, y]
         self.velocity = [0.0, 0.0]
         self.goal = goal if goal else [0.0, 0.0]
@@ -52,7 +52,7 @@ class Agent:
         fy = (desired_vy - self.velocity[1]) / self.tau
         return fx * (1 + (1 - self.pushover)), fy * (1 + (1 - self.pushover))
 
-    def compute_agent_repulsion(self, neighbors, A=20, B=0.5):
+    def compute_agent_repulsion(self, neighbors, A=10, B=0.8):
         fx, fy = 0.0, 0.0
         for other in neighbors:
             dx = self.position[0] - other.position[0]
@@ -67,16 +67,14 @@ class Agent:
             fy += self.pushover * 2.0 * coeff * n_y
         return fx, fy
 
-    def compute_wall_repulsion(self, env, A=5, B=0.5, decay_scale=1.0):
+    def compute_wall_repulsion(self, env, A=3, B=0.8, decay_scale=1.0):
         fx, fy = 0.0, 0.0
-
         for wall in env.walls:
-            # Skip walls that are close to an exit
+            # Skip walls in exit zones
             skip = False
-            for exit_data in env.exits:
-                ex0, ex1 = exit_data["points"]
-                dist_to_exit = self._segment_to_segment_distance(wall[0], wall[1], ex0, ex1)
-                if dist_to_exit < 1.0:  # 1 meter threshold to ignore exit-adjacent walls
+            for zone in env.exit_zones:
+                if zone[0][0] <= self.position[0] <= zone[1][0] and \
+                   zone[0][1] <= self.position[1] <= zone[1][1]:
                     skip = True
                     break
             if skip:
@@ -96,7 +94,6 @@ class Agent:
             strength = A * math.exp((self.radius - dist) / B)
             fx += strength * (dx / dist) * (1 - decay)
             fy += strength * (dy / dist) * (1 - decay)
-
         return fx, fy
 
     def step_full(self, env, neighbors, dt=0.1):
@@ -164,21 +161,3 @@ class Agent:
         divider_y = env.divider_y
         return (y <= divider_y and ey0 <= divider_y and ey1 <= divider_y) or \
                (y > divider_y and ey0 > divider_y and ey1 > divider_y)
-    
-    def _segment_to_segment_distance(self, a0, a1, b0, b1):
-        # Compute the shortest distance between two segments (a and b)
-        def point_segment_dist(p, s0, s1):
-            dx, dy = s1[0] - s0[0], s1[1] - s0[1]
-            if dx == dy == 0:
-                return math.dist(p, s0)
-            t = max(0, min(1, ((p[0] - s0[0]) * dx + (p[1] - s0[1]) * dy) / (dx * dx + dy * dy)))
-            proj = (s0[0] + t * dx, s0[1] + t * dy)
-            return math.dist(p, proj)
-
-        # Check all endpoints of both segments against the opposite segment
-        return min(
-            point_segment_dist(a0, b0, b1),
-            point_segment_dist(a1, b0, b1),
-            point_segment_dist(b0, a0, a1),
-            point_segment_dist(b1, a0, a1)
-        )

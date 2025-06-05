@@ -11,36 +11,36 @@ class Environment:
         self.stage_left_x = (self.width - self.stage_width) / 2
         self.stage_right_x = (self.width + self.stage_width) / 2
 
-        # Define exits as dicts with type and width
+        # Define exits with metadata
         self.exits = [
-            {  # Wide bottom F1 gate
+            {
                 "points": ((self.width / 2 - 6.0, 0), (self.width / 2 + 6.0, 0)),
                 "type": "bottom",
                 "width": 12.0
             },
-            {  # Narrow side exit (left)
-                "points": ((0, 77.5), (0, 82.5)),
+            {
+                "points": ((0, 75), (0, 85)),
                 "type": "side",
                 "width": 2.5
             },
-            {  # Narrow side exit (right)
-                "points": ((self.width, 77.5), (self.width, 82.5)),
+            {
+                "points": ((self.width, 75), (self.width, 85)),
                 "type": "side",
                 "width": 2.5
             }
         ]
 
-        # Derive wall segments (with gaps at exits)
         self.walls = self._generate_walls()
-
-        # Exit goals and centers will be computed
         self.exit_goals = {}
         self.exit_centers = {}
         self.prepare_exit_goals()
 
+        # New: bounding box zones around exits
+        self.exit_zones = self._generate_exit_zones(buffer=1.0)
+
     def _generate_walls(self):
         exit_lines = [e["points"] for e in self.exits]
-        (bx0, by0), (bx1, by1) = exit_lines[0]
+        (bx0, _), (bx1, _) = exit_lines[0]
         left_exit = exit_lines[1]
         right_exit = exit_lines[2]
 
@@ -52,7 +52,7 @@ class Environment:
             ((self.width, 0), (self.width, right_exit[0][1])),
             ((self.width, right_exit[1][1]), (self.width, self.height)),
             ((0, self.height), (self.width, self.height)),
-            ((0, self.divider_y), (self.width, self.divider_y)),  # Divider fence
+            ((0, self.divider_y), (self.width, self.divider_y)),
             ((self.stage_left_x, self.stage_back_y), (self.stage_left_x, self.stage_front_y)),
             ((self.stage_left_x, self.stage_front_y), (self.stage_right_x, self.stage_front_y)),
             ((self.stage_right_x, self.stage_front_y), (self.stage_right_x, self.stage_back_y)),
@@ -71,3 +71,14 @@ class Environment:
 
             self.exit_goals[((x1, y1), (x2, y2))] = points
             self.exit_centers[((x1, y1), (x2, y2))] = np.mean([np.array([x1, y1]), np.array([x2, y2])], axis=0)
+
+    def _generate_exit_zones(self, buffer=1.0):
+        zones = []
+        for exit_data in self.exits:
+            (x1, y1), (x2, y2) = exit_data["points"]
+            x_min = min(x1, x2) - buffer
+            x_max = max(x1, x2) + buffer
+            y_min = min(y1, y2) - buffer
+            y_max = max(y1, y2) + buffer
+            zones.append(((x_min, y_min), (x_max, y_max)))
+        return zones

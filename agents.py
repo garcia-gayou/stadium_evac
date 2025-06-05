@@ -2,7 +2,7 @@ import math
 import random
 
 class Agent:
-    def __init__(self, x, y, goal=None, radius=0.5, desired_speed=1.2, tau=0.3, pushover=None):
+    def __init__(self, x, y, goal=None, radius=0.5, desired_speed=1.0, tau=0.3, pushover=None):
         self.position = [x, y]
         self.velocity = [0.0, 0.0]
         self.goal = goal if goal else [0.0, 0.0]
@@ -10,6 +10,7 @@ class Agent:
         self.desired_speed = desired_speed
         self.tau = tau
         self.has_exited = False
+
         self.pushover = pushover if pushover is not None else min(max(random.gauss(0.5, 0.2), 0), 1)
         self.patience = max(random.gauss(self.pushover * 50, 5), 1)
         self.frustration = 0
@@ -52,7 +53,7 @@ class Agent:
         fy = (desired_vy - self.velocity[1]) / self.tau
         return fx * (1 + (1 - self.pushover)), fy * (1 + (1 - self.pushover))
 
-    def compute_agent_repulsion(self, neighbors, A=10, B=0.8):
+    def compute_agent_repulsion(self, neighbors, A=10, B=0.7):
         fx, fy = 0.0, 0.0
         for other in neighbors:
             dx = self.position[0] - other.position[0]
@@ -67,20 +68,9 @@ class Agent:
             fy += self.pushover * 2.0 * coeff * n_y
         return fx, fy
 
-    def compute_wall_repulsion(self, env, A=3, B=0.8, decay_scale=1.0):
+    def compute_wall_repulsion(self, env, A=10, B=0.5):
         fx, fy = 0.0, 0.0
         for wall in env.walls:
-            # Skip walls in exit zones
-            skip = False
-            for zone in env.exit_zones:
-                if zone[0][0] <= self.position[0] <= zone[1][0] and \
-                   zone[0][1] <= self.position[1] <= zone[1][1]:
-                    skip = True
-                    break
-            if skip:
-                continue
-
-            # Normal repulsion from wall
             closest = [
                 min(max(self.position[0], min(wall[0][0], wall[1][0])), max(wall[0][0], wall[1][0])),
                 min(max(self.position[1], min(wall[0][1], wall[1][1])), max(wall[0][1], wall[1][1]))
@@ -90,10 +80,9 @@ class Agent:
             dist = math.sqrt(dx * dx + dy * dy)
             if dist < 1e-5:
                 continue
-            decay = math.exp(-dist / decay_scale)
             strength = A * math.exp((self.radius - dist) / B)
-            fx += strength * (dx / dist) * (1 - decay)
-            fy += strength * (dy / dist) * (1 - decay)
+            fx += strength * (dx / dist)
+            fy += strength * (dy / dist)
         return fx, fy
 
     def step_full(self, env, neighbors, dt=0.1):
@@ -107,10 +96,16 @@ class Agent:
         fx = gx + ax + wx
         fy = gy + ay + wy
 
-        new_agent.velocity[0] += fx * dt
-        new_agent.velocity[1] += fy * dt
-        new_agent.position[0] += new_agent.velocity[0] * dt
-        new_agent.position[1] += new_agent.velocity[1] * dt
+        new_vx = new_agent.velocity[0] + fx * dt
+        new_vy = new_agent.velocity[1] + fy * dt
+        new_x = new_agent.position[0] + new_vx * dt
+        new_y = new_agent.position[1] + new_vy * dt
+
+        if not self._would_cross_wall((new_x, new_y), env):
+            new_agent.velocity[0] = new_vx
+            new_agent.velocity[1] = new_vy
+            new_agent.position[0] = new_x
+            new_agent.position[1] = new_y
 
         new_agent._check_patience()
         return new_agent
@@ -161,3 +156,16 @@ class Agent:
         divider_y = env.divider_y
         return (y <= divider_y and ey0 <= divider_y and ey1 <= divider_y) or \
                (y > divider_y and ey0 > divider_y and ey1 > divider_y)
+
+    def _would_cross_wall(self, new_pos, env):
+        x1, y1 = self.position
+        x2, y2 = new_pos
+        for (wx0, wy0), (wx1, wy1) in env.walls:
+            if self._segments_intersect((x1, y1), (x2, y2), (wx0, wy0), (wx1, wy1)):
+                return True
+        return False
+
+    def _segments_intersect(self, p1, p2, q1, q2):
+        def ccw(a, b, c):
+            return (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0])
+        return ccw(p1, q1, q2) != ccw(p2, q1, q2) and ccw(p1, p2, q1) != ccw(p1, p2, q2)

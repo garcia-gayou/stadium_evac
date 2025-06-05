@@ -12,7 +12,7 @@ def visualize(name="simulation"):
         print(f"Folder '{path}' does not exist.")
         return
 
-    files = sorted(f for f in os.listdir(path) if f.endswith(".pkl"))
+    files = sorted(f for f in os.listdir(path) if f.endswith(".pkl") and f[:4].isdigit())
     if not files:
         print(f"No simulation frames found in '{path}'.")
         return
@@ -23,8 +23,63 @@ def visualize(name="simulation"):
         with open(os.path.join(path, f), "rb") as file:
             frames.append(pickle.load(file))  # list of (pos, pushover)
 
+    remaining_counts_path = os.path.join(path, "remaining_counts.pkl")
+
     # Setup environment for drawing walls/exits
     env = Environment()
+
+    if os.path.exists(remaining_counts_path):
+        with open(remaining_counts_path, "rb") as f:
+            remaining_counts = pickle.load(f)
+
+        # Plot graph
+        dt = 0.1
+        time_axis = np.arange(len(remaining_counts)) * dt
+
+        plt.figure()
+        plt.plot(time_axis, remaining_counts, label="People Left", color='blue')
+        plt.xlabel("Time (s)")
+        plt.ylabel("Number of People Remaining")
+        plt.title("Evacuation Progress Over Time")
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("⚠️ No remaining_counts.pkl found. Skipping time-vs-people-left plot.")
+
+    # --- Density over time ---
+    density_over_time = []
+
+    for frame_data in frames:
+        if not frame_data:
+            density_over_time.append(0)
+            continue
+
+        positions = np.array([p for p, _ in frame_data])
+
+        # Use 1m x 1m bins
+        H, xedges, yedges = np.histogram2d(
+            positions[:, 0], positions[:, 1],
+            bins=(env.width, env.height),  # 1m resolution if your environment is in meters
+            range=[[0, env.width], [0, env.height]]
+        )
+
+        max_density = H.max()
+        density_over_time.append(max_density)
+
+    dt = 0.1
+    time_axis = np.arange(len(density_over_time)) * dt
+
+    plt.figure()
+    plt.plot(time_axis, density_over_time, label="Max Local Density", color='red')
+    plt.xlabel("Time (s)")
+    plt.ylabel("Max People per m²")
+    plt.title("Maximum Local Density Over Time")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
     fig, ax = plt.subplots(figsize=(10, 8))
     scat = ax.scatter([], [], s=10)

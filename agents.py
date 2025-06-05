@@ -16,9 +16,9 @@ class Agent:
         self.frustration = 0
         self.last_position = list(self.position)
 
-        # Desired speed with tie to pushover
+        # Desired speed with bounded clip and mild pushover influence
         base_speed = random.gauss(1.3, 0.25)
-        self.desired_speed = min(max(base_speed + 0.5 * (self.pushover - 0.5), 0.8), 2.0)
+        self.desired_speed = min(max(base_speed + 0.2 * (self.pushover - 0.5), 1.0), 2.75)
 
         self.main_exit = None
         self.exit_options = []
@@ -84,7 +84,6 @@ class Agent:
             dist = math.sqrt(dx * dx + dy * dy)
             if dist < 1e-5:
                 continue
-
             strength = A * math.exp((self.radius - dist) / B)
             fx += strength * (dx / dist)
             fy += strength * (dy / dist)

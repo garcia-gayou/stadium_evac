@@ -1,5 +1,6 @@
 import math
 import random
+import numpy as np
 
 class Agent:
     def __init__(self, x, y, goal=None, radius=0.5, tau=0.3, pushover=None):
@@ -10,52 +11,61 @@ class Agent:
         self.tau = tau
         self.has_exited = False
 
-        # Social traits
-        self.pushover = pushover if pushover is not None else min(max(random.gauss(0.5, 0.2), 0), 1)
+        self.pushover = pushover if pushover is not None else np.clip(random.gauss(0.5, 0.2), 0, 1)
+        self.initial_pushover = self.pushover
         self.patience = max(random.gauss(self.pushover * 50, 5), 1)
         self.frustration = 0
         self.last_position = list(self.position)
 
-        # Desired speed with bounded clip and mild pushover influence
         base_speed = random.gauss(1.3, 0.25)
+        self.base_speed = base_speed
         self.desired_speed = min(max(base_speed + 0.2 * (self.pushover - 0.5), 1.0), 2.75)
 
         self.main_exit = None
         self.exit_options = []
+        self.exit_targets = []
 
     def choose_main_exit(self, env):
-        min_dist = float('inf')
-        chosen = None
-        for exit_data in env.exits:
-            exit_line = exit_data["points"]
-            center = env.exit_centers[exit_line]
-            if not self._can_reach(exit_line, env):
-                continue
-            dist = math.dist(self.position, center)
-            if dist < min_dist:
-                min_dist = dist
-                chosen = exit_line
-        if chosen:
-            self.main_exit = chosen
-            self.exit_options = env.exit_goals[chosen]
+        from numpy.linalg import norm
+        accessible = env.get_accessible_exits(self.position)
+        if not accessible:
+            raise ValueError(f"No reachable exits for agent at {self.position}")
+        def dist_to_line(line): return env.distance_to_line(self.position, line)
+        best_line = min(accessible, key=dist_to_line)
+        self.main_exit = best_line
+        self.exit_options = accessible
+        self.exit_targets = env.exit_goals[best_line]
+        self.goal = random.choice(self.exit_targets)
 
     def update_goal(self, env):
-        if not self.exit_options:
-            return
-        best = min(self.exit_options, key=lambda g: math.dist(self.position, g))
-        self.goal = best
+        if self.exit_targets:
+            self.goal = random.choice(self.exit_targets)
+        else:
+            grad = env.get_fmm_gradient(self.position[0], self.position[1])
+            self.goal = [self.position[0] + grad[0], self.position[1] + grad[1]]
 
-    def compute_goal_force(self):
+    def compute_goal_force(self, env):
+        proximity = env.get_obstacle_proximity(self.position)
+        blend_weight = 1 / (1 + math.exp(2 * (proximity - 5)))
+
         dx = self.goal[0] - self.position[0]
         dy = self.goal[1] - self.position[1]
         dist = math.sqrt(dx * dx + dy * dy)
         if dist < 1e-5:
             return (0.0, 0.0)
+
         desired_vx = (dx / dist) * self.desired_speed
         desired_vy = (dy / dist) * self.desired_speed
-        fx = (desired_vx - self.velocity[0]) / self.tau
-        fy = (desired_vy - self.velocity[1]) / self.tau
-        return fx * (1 + (1 - self.pushover)), fy * (1 + (1 - self.pushover))
+
+        flow = env.get_fmm_gradient(self.position[0], self.position[1])
+        blended = np.array([
+            (1 - blend_weight) * desired_vx + blend_weight * flow[0] * self.desired_speed,
+            (1 - blend_weight) * desired_vy + blend_weight * flow[1] * self.desired_speed
+        ])
+
+        fx = (blended[0] - self.velocity[0]) / self.tau
+        fy = (blended[1] - self.velocity[1]) / self.tau
+        return fx, fy
 
     def compute_agent_repulsion(self, neighbors, A=10, B=0.8):
         fx, fy = 0.0, 0.0
@@ -75,50 +85,100 @@ class Agent:
     def compute_wall_repulsion(self, env, A=10, B=0.7):
         fx, fy = 0.0, 0.0
         for wall in env.walls:
-            closest = [
-                min(max(self.position[0], min(wall[0][0], wall[1][0])), max(wall[0][0], wall[1][0])),
-                min(max(self.position[1], min(wall[0][1], wall[1][1])), max(wall[0][1], wall[1][1]))
-            ]
-            dx = self.position[0] - closest[0]
-            dy = self.position[1] - closest[1]
+            a, b = wall
+            p = self.position
+            abx, aby = b[0] - a[0], b[1] - a[1]
+            apx, apy = p[0] - a[0], p[1] - a[1]
+            ab_len_sq = abx * abx + aby * aby
+            if ab_len_sq == 0:
+                closest = a
+            else:
+                t = max(0, min(1, (apx * abx + apy * aby) / ab_len_sq))
+                closest = [a[0] + t * abx, a[1] + t * aby]
+            dx = p[0] - closest[0]
+            dy = p[1] - closest[1]
             dist = math.sqrt(dx * dx + dy * dy)
             if dist < 1e-5:
                 continue
+            nx, ny = dx / dist, dy / dist
+            tx, ty = -ny, nx
             strength = A * math.exp((self.radius - dist) / B)
-            fx += strength * (dx / dist)
-            fy += strength * (dy / dist)
+            tangential = (self.velocity[0] * tx + self.velocity[1] * ty)
+            fx += strength * nx - 0.3 * tangential * tx
+            fy += strength * ny - 0.3 * tangential * ty
+        return fx, fy
+
+    def compute_obstacle_repulsion(self, env, A=10, B=0.7):
+        fx, fy = 0.0, 0.0
+        for obs in env.obstacles:
+            a, b = obs
+            p = self.position
+            abx, aby = b[0] - a[0], b[1] - a[1]
+            apx, apy = p[0] - a[0], p[1] - a[1]
+            ab_len_sq = abx * abx + aby * aby
+            if ab_len_sq == 0:
+                closest = a
+            else:
+                t = max(0, min(1, (apx * abx + apy * aby) / ab_len_sq))
+                closest = [a[0] + t * abx, a[1] + t * aby]
+            dx = p[0] - closest[0]
+            dy = p[1] - closest[1]
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist < 1e-5:
+                continue
+            nx, ny = dx / dist, dy / dist
+            tx, ty = -ny, nx
+            strength = A * math.exp((self.radius - dist) / B)
+            tangential = (self.velocity[0] * tx + self.velocity[1] * ty)
+            fx += strength * nx - 0.3 * tangential * tx
+            fy += strength * ny - 0.3 * tangential * ty
         return fx, fy
 
     def step_full(self, env, neighbors, dt=0.1):
         new_agent = self._clone()
         new_agent.update_goal(env)
-
-        gx, gy = new_agent.compute_goal_force()
+        gx, gy = new_agent.compute_goal_force(env)
         ax, ay = new_agent.compute_agent_repulsion(neighbors)
         wx, wy = new_agent.compute_wall_repulsion(env)
-
-        fx = gx + ax + wx
-        fy = gy + ay + wy
-
-        # Update velocity
+        ox, oy = new_agent.compute_obstacle_repulsion(env)
+        fx = gx + ax + wx + ox
+        fy = gy + ay + wy + oy
         new_agent.velocity[0] += fx * dt
         new_agent.velocity[1] += fy * dt
-
-        # Clamp speed
-        vx, vy = new_agent.velocity
-        speed = math.sqrt(vx * vx + vy * vy)
-        max_speed = 3.0
-        if speed > max_speed:
-            scale = max_speed / speed
+        speed = math.sqrt(new_agent.velocity[0]**2 + new_agent.velocity[1]**2)
+        if speed > 3.0:
+            scale = 3.0 / speed
             new_agent.velocity[0] *= scale
             new_agent.velocity[1] *= scale
-
-        # Move
         new_agent.position[0] += new_agent.velocity[0] * dt
         new_agent.position[1] += new_agent.velocity[1] * dt
-
         new_agent._check_patience()
         return new_agent
+
+    def _check_patience(self, threshold=0.05):
+        dx = self.position[0] - self.last_position[0]
+        dy = self.position[1] - self.last_position[1]
+        move = math.sqrt(dx * dx + dy * dy)
+        self.frustration += 1 if move < threshold else -0.5
+        self.frustration = max(0, self.frustration)
+
+        frustration_time = self.frustration * 0.1
+
+        # Speed up slightly if frustrated
+        boost = min(1.0, max(0.0, (frustration_time - 5) / 10.0))
+        self.desired_speed = min(self.base_speed * (1 + 0.35 * boost), 2.75)
+
+        # Adjust pushover
+        t_start = 5 + 0.1 * self.patience
+        t_end = t_start + 10 + 0.2 * self.patience
+        duration = t_end - t_start
+
+        if frustration_time >= t_start:
+            blend = (1 - math.cos(math.pi * min(frustration_time - t_start, duration) / duration)) / 2
+            target = min(self.initial_pushover, 0.1)
+            self.pushover = (1 - blend) * self.initial_pushover + blend * target
+
+        self.last_position = list(self.position)
 
     def update_state_from(self, updated):
         self.position = updated.position
@@ -126,43 +186,23 @@ class Agent:
         self.last_position = updated.last_position
         self.frustration = updated.frustration
         self.goal = updated.goal
+        self.pushover = updated.pushover
+        self.desired_speed = updated.desired_speed
 
     def _clone(self):
         clone = Agent(*self.position)
         clone.velocity = list(self.velocity)
         clone.goal = list(self.goal)
         clone.radius = self.radius
+        clone.base_speed = self.base_speed
         clone.desired_speed = self.desired_speed
         clone.tau = self.tau
         clone.pushover = self.pushover
+        clone.initial_pushover = self.initial_pushover
         clone.patience = self.patience
         clone.frustration = self.frustration
         clone.last_position = list(self.last_position)
         clone.main_exit = self.main_exit
         clone.exit_options = list(self.exit_options)
+        clone.exit_targets = list(self.exit_targets)
         return clone
-
-    def _check_patience(self, threshold=0.05):
-        dx = self.position[0] - self.last_position[0]
-        dy = self.position[1] - self.last_position[1]
-        move = math.sqrt(dx * dx + dy * dy)
-        if move < threshold:
-            self.frustration += 1
-        else:
-            self.frustration = max(0, self.frustration - 0.5)
-        self.last_position = list(self.position)
-
-        if self.frustration > self.patience:
-            dx = self.goal[0] - self.position[0]
-            dy = self.goal[1] - self.position[1]
-            dist = math.sqrt(dx * dx + dy * dy)
-            if dist > 1e-5:
-                self.velocity[0] += (dx / dist) * 0.8
-                self.velocity[1] += (dy / dist) * 0.8
-
-    def _can_reach(self, exit_line, env):
-        y = self.position[1]
-        ey0, ey1 = exit_line[0][1], exit_line[1][1]
-        divider_y = env.divider_y
-        return (y <= divider_y and ey0 <= divider_y and ey1 <= divider_y) or \
-               (y > divider_y and ey0 > divider_y and ey1 > divider_y)

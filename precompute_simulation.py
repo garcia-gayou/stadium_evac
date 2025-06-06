@@ -4,8 +4,8 @@ import pickle
 from simulation import Simulation
 from multiprocessing import freeze_support
 
-def run_simulation(name="simulation", num_agents=1000, max_frames=1000):
-    sim = Simulation(num_agents=num_agents)
+def run_simulation(name="simulation", num_agents=1000, layout="none", max_frames=2000):
+    sim = Simulation(num_agents=num_agents, layout=layout)    
     output_dir = os.path.join("sim_outputs", name)
     os.makedirs(output_dir, exist_ok=True)
 
@@ -43,16 +43,20 @@ def run_simulation(name="simulation", num_agents=1000, max_frames=1000):
     with open(os.path.join(output_dir, "exit_rate.pkl"), "wb") as f:
         pickle.dump(exit_rate, f)
 
+    with open(os.path.join(output_dir, "layout.txt"), "w") as f:
+        f.write(layout)
+
     print(f"✅ Done! Total frames simulated: {frame}")
     return frame
+
+    
 
 if __name__ == "__main__":
     freeze_support()
 
     name = sys.argv[1] if len(sys.argv) > 1 else "simulation"
     num_agents = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
+    layout = sys.argv[3] if len(sys.argv) > 3 else "none"
 
-    frame_count = run_simulation(name=name, num_agents=num_agents)
-    dt = 0.1
-    print(f"⏱️ Total evacuation time: {frame_count * dt:.1f} seconds")
+    run_simulation(name=name, num_agents=num_agents, layout=layout)
 

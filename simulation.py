@@ -7,8 +7,8 @@ from scipy.spatial import KDTree
 import numpy as np
 
 class Simulation:
-    def __init__(self, num_agents=1000):
-        self.env = Environment()
+    def __init__(self, num_agents=1000, layout="none"):
+        self.env = Environment(layout=layout)
         self.env.prepare_exit_goals()
         self.agent_positions = generate_agent_positions(
             self.env, num_agents // 2, num_agents // 2
@@ -17,6 +17,7 @@ class Simulation:
         self.agents = [Agent(x, y) for x, y in self.agent_positions]
         for agent in self.agents:
             agent.choose_main_exit(self.env)
+            agent.update_goal(self.env)
         self.finished = False
         self.frame = 0
 

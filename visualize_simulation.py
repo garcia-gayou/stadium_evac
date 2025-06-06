@@ -23,19 +23,34 @@ def visualize(name="simulation"):
         with open(os.path.join(path, f), "rb") as file:
             frames.append(pickle.load(file))  # list of (pos, pushover)
 
+    # Load layout name if available
+    layout_path = os.path.join(path, "layout.txt")
+    layout = name
+    if os.path.exists(layout_path):
+        with open(layout_path, "r") as f:
+            layout = f.read().strip()
+
+    env = Environment(layout=layout)
+    plt.figure(figsize=(10, 8))
+    plt.imshow(env.fmm_field.T, origin='lower', cmap='plasma')
+    plt.colorbar(label='FMM Cost')
+    plt.title("FMM Cost Field (plasma colormap)")
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(10, 8))
+    plt.imshow((env.cost_grid == np.inf).T, cmap="gray_r", origin="lower")
+    plt.title("Obstacle and Wall Mask (white = blocked)")
+    plt.tight_layout()
+    plt.show()
+
+    # Plot static graphs
     remaining_counts_path = os.path.join(path, "remaining_counts.pkl")
-
-    # Setup environment for drawing walls/exits
-    env = Environment()
-
     if os.path.exists(remaining_counts_path):
         with open(remaining_counts_path, "rb") as f:
             remaining_counts = pickle.load(f)
-
-        # Plot graph
         dt = 0.1
         time_axis = np.arange(len(remaining_counts)) * dt
-
         plt.figure()
         plt.plot(time_axis, remaining_counts, label="People Left", color='blue')
         plt.xlabel("Time (s)")
@@ -45,14 +60,11 @@ def visualize(name="simulation"):
         plt.legend()
         plt.tight_layout()
         plt.show()
-    else:
-        print("⚠️ No remaining_counts.pkl found. Skipping time-vs-people-left plot.")
 
     exit_rate_path = os.path.join(path, "exit_rate.pkl")
     if os.path.exists(exit_rate_path):
         with open(exit_rate_path, "rb") as f:
             exit_rate = pickle.load(f)
-
         time_axis = np.arange(len(exit_rate)) * 0.1
         plt.figure()
         plt.plot(time_axis, exit_rate, label="People Exiting per Second", color='green')
@@ -63,42 +75,27 @@ def visualize(name="simulation"):
         plt.legend()
         plt.tight_layout()
         plt.show()
-    else:
-        print("⚠️ No exit_rate.pkl found. Skipping exit rate plot.")
 
-    # --- Density over time ---
+    # Density
     density_over_time = []
     mean_densities = []
     perc95_densities = []
-
-
     for frame_data in frames:
         if not frame_data:
             density_over_time.append(0)
             continue
-
         positions = np.array([p for p, _ in frame_data])
-
-        # Use 1m x 1m bins
         H, xedges, yedges = np.histogram2d(
             positions[:, 0], positions[:, 1],
-            bins=(env.width, env.height),  # 1m resolution if your environment is in meters
+            bins=(env.width, env.height),
             range=[[0, env.width], [0, env.height]]
         )
-
         flat = H.flatten()
-        max_density = flat.max()
-        mean_density = flat.mean()
-        perc95_density = np.percentile(flat, 95)
+        density_over_time.append(flat.max())
+        mean_densities.append(flat.mean())
+        perc95_densities.append(np.percentile(flat, 95))
 
-        density_over_time.append(max_density)
-        mean_densities.append(mean_density)
-        perc95_densities.append(perc95_density)
-
-
-    dt = 0.1
-    time_axis = np.arange(len(mean_densities)) * dt
-
+    time_axis = np.arange(len(mean_densities)) * 0.1
     plt.figure()
     plt.plot(time_axis, mean_densities, label="Mean Density", color='blue')
     plt.plot(time_axis, perc95_densities, label="95th Percentile Density", color='orange')
@@ -111,11 +108,11 @@ def visualize(name="simulation"):
     plt.tight_layout()
     plt.show()
 
+    # Crush index
     crush_index_path = os.path.join(path, "crush_index.pkl")
     if os.path.exists(crush_index_path):
         with open(crush_index_path, "rb") as f:
             crush_indices = pickle.load(f)
-
         time_axis = np.arange(len(crush_indices)) * 0.1
         plt.figure()
         plt.plot(time_axis, crush_indices, label="Crush Index", color='purple')
@@ -126,26 +123,45 @@ def visualize(name="simulation"):
         plt.legend()
         plt.tight_layout()
         plt.show()
-    else:
-        print("⚠️ No crush_index.pkl found.")
 
-
+    # Static scene setup
     fig, ax = plt.subplots(figsize=(10, 8))
-    scat = ax.scatter([], [], s=10)
     ax.set_xlim(0, env.width)
     ax.set_ylim(0, env.height)
+    ax.set_aspect('equal')
     ax.set_title(f"Evacuation Simulation: {name}")
-    cmap = plt.get_cmap("coolwarm")
 
     # Draw walls
     for wall in env.walls:
         ax.plot([wall[0][0], wall[1][0]], [wall[0][1], wall[1][1]], color='black', linewidth=2)
 
-    # Draw exits with thicker lines
+    # Draw exits
     for exit_data in env.exits:
         (x0, y0), (x1, y1) = exit_data["points"]
         ax.plot([x0, x1], [y0, y1], color='green', linewidth=8, solid_capstyle='round')
-        
+
+    # Draw obstacles
+    for (x1, y1), (x2, y2) in env.obstacles:
+        ax.plot([x1, x2], [y1, y2], color='orange', linewidth=2)
+
+    # ▶️ FMM field visualization (quiver arrows)
+    step = 1  # Arrow spacing
+    X, Y, U, V = [], [], [], []
+    for x in range(0, int(env.width), step):
+        for y in range(0, int(env.height), step):
+            grad = env.get_fmm_gradient(x, y)
+            if np.linalg.norm(grad) > 0:
+                X.append(x)
+                Y.append(y)
+                U.append(grad[0])
+                V.append(grad[1])
+
+    # Much smaller and lighter arrows
+    ax.quiver(X, Y, U, V, color='grey', alpha=0.4, scale=60, width=0.001)
+    # Agents (animated)
+    scat = ax.scatter([], [], s=10)
+    cmap = plt.get_cmap("coolwarm")
+
     def update(i):
         data = frames[i]
         if not data:
@@ -155,8 +171,7 @@ def visualize(name="simulation"):
 
         positions = [p for p, _ in data]
         pushovers = [p for _, p in data]
-        norm_pushovers = [min(max(p, 0.0), 1.0) for p in pushovers]  # Ensure [0, 1] range
-
+        norm_pushovers = [min(max(p, 0.0), 1.0) for p in pushovers]
         scat.set_offsets(np.array(positions))
         scat.set_color([cmap(1 - p) for p in norm_pushovers])
         return scat,

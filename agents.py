@@ -1,6 +1,7 @@
 import math
 import random
 import numpy as np
+import copy
 
 class Agent:
     def __init__(self, x, y, goal=None, radius=0.5, tau=0.3, pushover=None):
@@ -25,8 +26,10 @@ class Agent:
         self.exit_options = []
         self.exit_targets = []
 
+        self._last_proximity = None
+        self._last_proximity_position = list(self.position)
+
     def choose_main_exit(self, env):
-        from numpy.linalg import norm
         accessible = env.get_accessible_exits(self.position)
         if not accessible:
             raise ValueError(f"No reachable exits for agent at {self.position}")
@@ -41,12 +44,30 @@ class Agent:
         if self.exit_targets:
             self.goal = random.choice(self.exit_targets)
         else:
-            grad = env.get_fmm_gradient(self.position[0], self.position[1])
+            grad = self.compute_fmm_gradient(env)
             self.goal = [self.position[0] + grad[0], self.position[1] + grad[1]]
 
+    def compute_fmm_gradient(self, env):
+        if env.obstacle_points is None or len(env.obstacle_points) == 0:
+            return np.array([0.0, 0.0])
+        min_dist = np.min(np.linalg.norm(env.obstacle_points - self.position, axis=1))
+        if min_dist < 10.0:
+            return env.get_fmm_gradient(self.position[0], self.position[1])
+        return np.array([0.0, 0.0])
+
+    def get_cached_obstacle_proximity(self, env, threshold=0.1):
+        dx = self.position[0] - self._last_proximity_position[0]
+        dy = self.position[1] - self._last_proximity_position[1]
+        moved = math.sqrt(dx * dx + dy * dy)
+        if self._last_proximity is not None and moved < threshold:
+            return self._last_proximity
+        self._last_proximity = env.get_obstacle_proximity(self.position)
+        self._last_proximity_position = list(self.position)
+        return self._last_proximity
+
     def compute_goal_force(self, env):
-        proximity = env.get_obstacle_proximity(self.position)
-        blend_weight = 1 / (1 + math.exp(2 * (proximity - 5)))
+        proximity = self.get_cached_obstacle_proximity(env)
+        blend_weight = min(0.75, 1 / (1 + math.exp(2.0 * (proximity - 3.0))))  # 0% @ 5m, 75% @ 1m
 
         dx = self.goal[0] - self.position[0]
         dy = self.goal[1] - self.position[1]
@@ -57,7 +78,7 @@ class Agent:
         desired_vx = (dx / dist) * self.desired_speed
         desired_vy = (dy / dist) * self.desired_speed
 
-        flow = env.get_fmm_gradient(self.position[0], self.position[1])
+        flow = self.compute_fmm_gradient(env)
         blended = np.array([
             (1 - blend_weight) * desired_vx + blend_weight * flow[0] * self.desired_speed,
             (1 - blend_weight) * desired_vy + blend_weight * flow[1] * self.desired_speed
@@ -163,12 +184,9 @@ class Agent:
         self.frustration = max(0, self.frustration)
 
         frustration_time = self.frustration * 0.1
-
-        # Speed up slightly if frustrated
         boost = min(1.0, max(0.0, (frustration_time - 5) / 10.0))
         self.desired_speed = min(self.base_speed * (1 + 0.35 * boost), 2.75)
 
-        # Adjust pushover
         t_start = 5 + 0.1 * self.patience
         t_end = t_start + 10 + 0.2 * self.patience
         duration = t_end - t_start
@@ -190,19 +208,4 @@ class Agent:
         self.desired_speed = updated.desired_speed
 
     def _clone(self):
-        clone = Agent(*self.position)
-        clone.velocity = list(self.velocity)
-        clone.goal = list(self.goal)
-        clone.radius = self.radius
-        clone.base_speed = self.base_speed
-        clone.desired_speed = self.desired_speed
-        clone.tau = self.tau
-        clone.pushover = self.pushover
-        clone.initial_pushover = self.initial_pushover
-        clone.patience = self.patience
-        clone.frustration = self.frustration
-        clone.last_position = list(self.last_position)
-        clone.main_exit = self.main_exit
-        clone.exit_options = list(self.exit_options)
-        clone.exit_targets = list(self.exit_targets)
-        return clone
+        return copy.deepcopy(self)

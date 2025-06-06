@@ -31,19 +31,7 @@ def visualize(name="simulation"):
             layout = f.read().strip()
 
     env = Environment(layout=layout)
-    plt.figure(figsize=(10, 8))
-    plt.imshow(env.fmm_field.T, origin='lower', cmap='plasma')
-    plt.colorbar(label='FMM Cost')
-    plt.title("FMM Cost Field (plasma colormap)")
-    plt.tight_layout()
-    plt.show()
-
-    plt.figure(figsize=(10, 8))
-    plt.imshow((env.cost_grid == np.inf).T, cmap="gray_r", origin="lower")
-    plt.title("Obstacle and Wall Mask (white = blocked)")
-    plt.tight_layout()
-    plt.show()
-
+    
     # Plot static graphs
     remaining_counts_path = os.path.join(path, "remaining_counts.pkl")
     if os.path.exists(remaining_counts_path):

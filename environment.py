@@ -2,10 +2,10 @@ import numpy as np
 import heapq
 
 class Environment:
-    def __init__(self, layout="none"):
+    def __init__(self, layout="none", curve_resolution=10):
         self.width = 130
         self.height = 100
-        self.grid_res = 2.0  # finer resolution: 2 cells per meter
+        self.grid_res = 6.0
         self.grid_width = int(self.width * self.grid_res)
         self.grid_height = int(self.height * self.grid_res)
 
@@ -26,8 +26,12 @@ class Environment:
         ]
 
         self.walls = self._generate_walls()
+        self.divider = ((self.safe_left, self.divider_y), (self.safe_right, self.divider_y))
+        self.walls.append(self.divider)  # Include in agent repulsion only
+
         self.obstacles = []
-        self._generate_obstacles(layout)
+        self._generate_obstacles(layout, curve_resolution)
+        self.obstacle_points = self._get_all_obstacle_points()
 
         self.cost_grid = np.ones((self.grid_width, self.grid_height))
         self.exit_goals = {}
@@ -51,19 +55,14 @@ class Environment:
             ((self.safe_right, 0), (self.safe_right, right_exit[0][1])),
             ((self.safe_right, right_exit[1][1]), (self.safe_right, self.height)),
             ((self.safe_left, self.height), (self.safe_right, self.height)),
-            ((self.safe_left, self.divider_y), (self.safe_right, self.divider_y)),
             ((self.stage_left_x, self.stage_back_y), (self.stage_left_x, self.stage_front_y)),
             ((self.stage_left_x, self.stage_front_y), (self.stage_right_x, self.stage_front_y)),
             ((self.stage_right_x, self.stage_front_y), (self.stage_right_x, self.stage_back_y)),
         ]
 
-    def _generate_obstacles(self, layout):
+    def _generate_obstacles(self, layout, curve_resolution=10):
         if layout == "horizontal_barrier":
-            # Strategic fence to split flow around exit (exit at x=59 to 71)
-            fence_left = 59 + 1.5  # leave side gaps
-            fence_right = 71 - 1.5
-            y = 6.5  # ~6.5 meters above the exit
-            self.obstacles.append(((fence_left, y), (fence_right, y)))
+            self.obstacles.append(((60, 7.5), (70, 7.5)))
         elif layout == "left_block":
             self.obstacles.append(((10, 20), (10, 60)))
         elif layout == "cross_blocks":
@@ -72,24 +71,61 @@ class Environment:
         elif layout == "maze":
             for y in range(10, 90, 20):
                 self.obstacles.append(((20, y), (110, y)))
+        elif layout == "parabola":
+            width = 30
+            clearance = 10
+            peak_height = 20
+            x1 = (self.width - width) / 2
+            x2 = (self.width + width) / 2
+            f = fit_parabola(x1, x2, clearance, clearance, peak_height)
+            x_vals = np.linspace(x1, x2, curve_resolution)
+            points = [(x, f(x)) for x in x_vals]
+            for i in range(len(points) - 1):
+                self.obstacles.append((points[i], points[i + 1]))
+        elif layout == "funnel":
+            exit_left = 59
+            exit_right = 71
+            exit_y = 0
+            gap_from_exit = 6.0
+            funnel_top_y = 12.0
+            funnel_apex_x = (exit_left + exit_right) / 2
+            base_left = (exit_left, exit_y + gap_from_exit)
+            base_right = (exit_right, exit_y + gap_from_exit)
+            apex = (funnel_apex_x, funnel_top_y)
+            self.obstacles.append((apex, base_left))
+            self.obstacles.append((apex, base_right))
+
+    def _get_all_obstacle_points(self):
+        points = []
+        for obs in self.obstacles:
+            (x0, y0), (x1, y1) = obs
+            steps = max(int(np.linalg.norm([x1 - x0, y1 - y0]) * 10), 1)
+            for i in range(steps + 1):
+                t = i / steps
+                x = x0 + t * (x1 - x0)
+                y = y0 + t * (y1 - y0)
+                points.append([x, y])
+        return np.array(points)
 
     def _mark_cost_obstacles(self):
-        for seg in self.walls + self.obstacles:
+        high_cost = 100  # effectively solid but allows FMM gradient computation
+
+        # Add both obstacles and the divider
+        for seg in self.obstacles + [self.divider]:
             (x0, y0), (x1, y1) = seg
             x0 = np.clip(int(round(x0 * self.grid_res)), 0, self.cost_grid.shape[0] - 1)
             x1 = np.clip(int(round(x1 * self.grid_res)), 0, self.cost_grid.shape[0] - 1)
             y0 = np.clip(int(round(y0 * self.grid_res)), 0, self.cost_grid.shape[1] - 1)
             y1 = np.clip(int(round(y1 * self.grid_res)), 0, self.cost_grid.shape[1] - 1)
+
             for x in range(min(x0, x1), max(x0, x1) + 1):
                 for y in range(min(y0, y1), max(y0, y1) + 1):
-                    for dx in range(-1, 2):
-                        for dy in range(-1, 2):
-                            if abs(dy) == 1:
-                                continue  # only expand horizontally
-                            xx = x + dx
-                            yy = y + dy
+                    # Expand to 3x3 neighborhood to cover adjacent cells
+                    for dx in [-1, 0, 1]:
+                        for dy in [-1, 0, 1]:
+                            xx, yy = x + dx, y + dy
                             if 0 <= xx < self.cost_grid.shape[0] and 0 <= yy < self.cost_grid.shape[1]:
-                                self.cost_grid[xx, yy] = np.inf
+                                self.cost_grid[xx, yy] = high_cost
 
     def _compute_fast_marching_field(self):
         field = np.full_like(self.cost_grid, np.inf, dtype=float)
@@ -102,23 +138,22 @@ class Environment:
                     field[x, y] = 0
                     heapq.heappush(frontier, (0, x, y))
 
-        directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        directions = [(-1, 0), (1, 0), (0, -1), (0, 1),
+                      (-1, -1), (-1, 1), (1, -1), (1, 1)]
 
         while frontier:
             cost, x, y = heapq.heappop(frontier)
             if visited[x, y]:
                 continue
             visited[x, y] = True
-
             for dx, dy in directions:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < self.cost_grid.shape[0] and 0 <= ny < self.cost_grid.shape[1]:
-                    if not visited[nx, ny] and self.cost_grid[nx, ny] != np.inf:
+                    if not visited[nx, ny] and np.isfinite(self.cost_grid[nx, ny]):
                         new_cost = cost + self.cost_grid[nx, ny]
                         if new_cost < field[nx, ny]:
                             field[nx, ny] = new_cost
                             heapq.heappush(frontier, (new_cost, nx, ny))
-
         return field
 
     def get_fmm_gradient(self, x, y):
@@ -145,9 +180,7 @@ class Environment:
             return np.array([0.0, 0.0])
         grad_sum = np.sum(grad_candidates, axis=0)
         norm = np.linalg.norm(grad_sum)
-        if norm > 0:
-            return grad_sum / norm
-        return np.array([0.0, 0.0])
+        return grad_sum / norm if norm > 0 else np.array([0.0, 0.0])
 
     def prepare_exit_goals(self, num_points=5, margin_ratio=0.1):
         for exit_data in self.exits:
@@ -182,20 +215,16 @@ class Environment:
         return accessible
 
     def distance_to_line(self, point, line):
-        from numpy.linalg import norm
         p = np.array(point)
-        a = np.array(line[0])
-        b = np.array(line[1])
+        a, b = np.array(line[0]), np.array(line[1])
         ab = b - a
         t = np.clip(np.dot(p - a, ab) / np.dot(ab, ab), 0, 1)
-        projection = a + t * ab
-        return norm(p - projection)
+        return np.linalg.norm(p - (a + t * ab))
 
     def get_obstacle_proximity(self, pos):
-        """Return the shortest distance from pos to any wall or obstacle."""
         min_dist = float("inf")
         px, py = pos
-        for (a, b) in self.walls + self.obstacles:
+        for (a, b) in self.obstacles:
             ax, ay = a
             bx, by = b
             ab = np.array([bx - ax, by - ay])
@@ -210,3 +239,15 @@ class Environment:
             if dist < min_dist:
                 min_dist = dist
         return min_dist
+
+
+def fit_parabola(x1, x2, y1, y2, y_mid):
+    x_mid = (x1 + x2) / 2
+    A = np.array([
+        [x1**2, x1, 1],
+        [x_mid**2, x_mid, 1],
+        [x2**2, x2, 1]
+    ])
+    Y = np.array([y1, y_mid, y2])
+    a, b, c = np.linalg.solve(A, Y)
+    return lambda x: a * x**2 + b * x + c

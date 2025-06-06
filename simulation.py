@@ -2,7 +2,7 @@ import math
 from environment import Environment
 from agent_distribution import generate_agent_positions
 from agents import Agent
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, parallel_backend
 from scipy.spatial import KDTree
 import numpy as np
 
@@ -39,11 +39,12 @@ class Simulation:
             for i, pos in enumerate(positions)
         }
 
-        # Parallel execution of full agent step (including repulsion + updates)
-        updated_agents = Parallel(n_jobs=-1)(
-            delayed(agent.step_full)(self.env, neighbor_map[i])
-            for i, agent in enumerate(active_agents)
-        )
+        # Use thread-based backend to avoid serialization issues
+        with parallel_backend("threading", n_jobs=-1):
+            updated_agents = Parallel()(
+                delayed(agent.step_full)(self.env, neighbor_map[i])
+                for i, agent in enumerate(active_agents)
+            )
 
         # Commit updates to original agent objects
         for i, agent in enumerate(active_agents):
@@ -70,7 +71,7 @@ class Simulation:
 
     def is_finished(self):
         return self.finished
-    
+
     def compute_crush_index(self):
         active = [a for a in self.agents if not a.has_exited]
         if not active:
@@ -78,7 +79,7 @@ class Simulation:
 
         positions = np.array([a.position for a in active])
         pushovers = np.array([a.pushover for a in active])
-        
+
         # 1m x 1m grid bins
         H, _, _ = np.histogram2d(
             positions[:, 0], positions[:, 1],

@@ -29,6 +29,10 @@ class Agent:
         self._last_proximity = None
         self._last_proximity_position = list(self.position)
 
+        self.stuck_counter = 0
+        self._last_checked_position = list(self.position)
+
+
     def choose_main_exit(self, env):
         accessible = env.get_accessible_exits(self.position)
         if not accessible:
@@ -66,8 +70,13 @@ class Agent:
         return self._last_proximity
 
     def compute_goal_force(self, env):
+        gradient_strength = env.get_gradient_magnitude(self.position[0], self.position[1])
+
         proximity = self.get_cached_obstacle_proximity(env)
-        blend_weight = min(0.75, 1 / (1 + math.exp(2.0 * (proximity - 3.0))))  # 0% @ 5m, 75% @ 1m
+        blend_weight = min(0.85, 1 / (1 + math.exp(1.5 * (proximity - 4.0))))
+
+        if gradient_strength < 0.05:
+            blend_weight *= 0.25  # trust less the global field
 
         dx = self.goal[0] - self.position[0]
         dy = self.goal[1] - self.position[1]
@@ -86,6 +95,46 @@ class Agent:
 
         fx = (blended[0] - self.velocity[0]) / self.tau
         fy = (blended[1] - self.velocity[1]) / self.tau
+
+        # If stuck for many frames, inject jitter
+        if self.stuck_counter >= 10:
+            jitter = np.random.uniform(-1, 1, size=2)
+            jitter /= np.linalg.norm(jitter)
+            jitter *= 0.5  # Small push
+            fx += jitter[0]
+            fy += jitter[1]
+
+        # Detour assist: if close to other agents or walls, bias lateral movement
+        proximity = self.get_cached_obstacle_proximity(env)
+        if proximity < 1.5:  # near wall or obstacle
+            side_step = np.array([-dy, dx])  # perpendicular vector
+            side_step = side_step / np.linalg.norm(side_step)
+            fx += 0.2 * side_step[0]
+            fy += 0.2 * side_step[1]
+
+        # Barrier-side sliding: add lateral bias when stuck and near wall
+        if self.stuck_counter >= 8:
+            proximity = self.get_cached_obstacle_proximity(env)
+            if proximity < 1.5:
+                # Compute perpendicular direction to goal vector (for sideways move)
+                dx = self.goal[0] - self.position[0]
+                dy = self.goal[1] - self.position[1]
+                norm = math.sqrt(dx * dx + dy * dy)
+                if norm > 1e-3:
+                    lateral = np.array([-dy, dx]) / norm
+                    direction = random.choice([-1, 1])  # Left or right slide
+                    fx += 0.2 * direction * lateral[0]
+                    fy += 0.2 * direction * lateral[1]
+
+        if gradient_strength < 0.01 and self.stuck_counter >= 5:
+            # Direct movement toward goal (ignore FMM)
+            dx = self.goal[0] - self.position[0]
+            dy = self.goal[1] - self.position[1]
+            norm = math.sqrt(dx * dx + dy * dy)
+            if norm > 1e-5:
+                fx = (dx / norm * self.desired_speed - self.velocity[0]) / self.tau
+                fy = (dy / norm * self.desired_speed - self.velocity[1]) / self.tau
+
         return fx, fy
 
     def compute_agent_repulsion(self, neighbors, A=10, B=0.8):
@@ -101,6 +150,10 @@ class Agent:
             coeff = A * math.exp((r_sum - dist) / B)
             fx += self.pushover * 2.0 * coeff * n_x
             fy += self.pushover * 2.0 * coeff * n_y
+        # Slight asymmetry to break deadlocks
+        bias = np.random.uniform(-0.05, 0.05)
+        fx += bias
+
         return fx, fy
 
     def compute_wall_repulsion(self, env, A=10, B=0.7):
@@ -151,8 +204,9 @@ class Agent:
             tx, ty = -ny, nx
             strength = A * math.exp((self.radius - dist) / B)
             tangential = (self.velocity[0] * tx + self.velocity[1] * ty)
-            fx += strength * nx - 0.3 * tangential * tx
-            fy += strength * ny - 0.3 * tangential * ty
+            fx += strength * nx - 0.5 * tangential * tx
+            fy += strength * ny - 0.5 * tangential * ty
+
         return fx, fy
 
     def step_full(self, env, neighbors, dt=0.1):
@@ -200,6 +254,18 @@ class Agent:
 
     def update_state_from(self, updated):
         self.position = updated.position
+        # Track if the agent has barely moved
+        dx = self.position[0] - self._last_checked_position[0]
+        dy = self.position[1] - self._last_checked_position[1]
+        movement = math.sqrt(dx * dx + dy * dy)
+
+        if movement < 0.05:
+            self.stuck_counter += 1
+        else:
+            self.stuck_counter = 0
+
+        self._last_checked_position = list(self.position)
+
         self.velocity = updated.velocity
         self.last_position = updated.last_position
         self.frustration = updated.frustration
@@ -208,4 +274,5 @@ class Agent:
         self.desired_speed = updated.desired_speed
 
     def _clone(self):
-        return copy.deepcopy(self)
+        return copy.deepcopy(self) 
+

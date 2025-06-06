@@ -1,5 +1,6 @@
 import numpy as np
 import heapq
+from scipy.ndimage import distance_transform_edt
 
 class Environment:
     def __init__(self, layout="none", curve_resolution=10):
@@ -132,6 +133,7 @@ class Environment:
         visited = np.zeros_like(self.cost_grid, dtype=bool)
         frontier = []
 
+        # Initialize: points on exits become zero
         for x in range(self.cost_grid.shape[0]):
             for y in range(self.cost_grid.shape[1]):
                 if self.cost_grid[x, y] == 0:
@@ -139,7 +141,7 @@ class Environment:
                     heapq.heappush(frontier, (0, x, y))
 
         directions = [(-1, 0), (1, 0), (0, -1), (0, 1),
-                      (-1, -1), (-1, 1), (1, -1), (1, 1)]
+                    (-1, -1), (-1, 1), (1, -1), (1, 1)]
 
         while frontier:
             cost, x, y = heapq.heappop(frontier)
@@ -149,11 +151,19 @@ class Environment:
             for dx, dy in directions:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < self.cost_grid.shape[0] and 0 <= ny < self.cost_grid.shape[1]:
-                    if not visited[nx, ny] and np.isfinite(self.cost_grid[nx, ny]):
+                    if not visited[nx, ny] and self.cost_grid[nx, ny] < 100:
                         new_cost = cost + self.cost_grid[nx, ny]
                         if new_cost < field[nx, ny]:
                             field[nx, ny] = new_cost
                             heapq.heappush(frontier, (new_cost, nx, ny))
+
+        # Optional smoothing: inpaint unreachable
+        unreachable = ~np.isfinite(field)
+        if np.any(unreachable):
+            from scipy.ndimage import distance_transform_edt
+            dist, (ix, iy) = distance_transform_edt(unreachable, return_indices=True)
+            field[unreachable] = field[ix[unreachable], iy[unreachable]]
+
         return field
 
     def get_fmm_gradient(self, x, y):
@@ -166,7 +176,8 @@ class Environment:
         ]
         current = self.fmm_field[xi, yi]
         if not np.isfinite(current):
-            return np.array([0.0, 0.0])
+            return self._fallback_gradient(x, y)
+
         for dx, dy in directions:
             nx, ny = xi + dx, yi + dy
             if 0 <= nx < self.fmm_field.shape[0] and 0 <= ny < self.fmm_field.shape[1]:
@@ -176,11 +187,28 @@ class Environment:
                     diff = neighbor - current
                     grad = -diff * vec
                     grad_candidates.append(grad)
+
         if not grad_candidates:
-            return np.array([0.0, 0.0])
+            return self._fallback_gradient(x, y)
+
         grad_sum = np.sum(grad_candidates, axis=0)
         norm = np.linalg.norm(grad_sum)
-        return grad_sum / norm if norm > 0 else np.array([0.0, 0.0])
+
+        # If gradient magnitude is near zero, fall back
+        if norm < 1e-3:
+            return self._fallback_gradient(x, y)
+
+        return grad_sum / norm
+    
+    def _fallback_gradient(self, x, y):
+        # Move toward the nearest exit center
+        closest_exit = min(
+            self.exit_centers.values(),
+            key=lambda c: np.linalg.norm(c - np.array([x, y]))
+        )
+        vec = np.array(closest_exit) - np.array([x, y])
+        norm = np.linalg.norm(vec)
+        return vec / norm if norm > 0 else np.array([0.0, 0.0])
 
     def prepare_exit_goals(self, num_points=5, margin_ratio=0.1):
         for exit_data in self.exits:
@@ -203,6 +231,22 @@ class Environment:
                 xi = np.clip(xi, 0, self.cost_grid.shape[0] - 1)
                 yi = np.clip(yi, 0, self.cost_grid.shape[1] - 1)
                 self.cost_grid[xi, yi] = 0
+        self.helper_zone = (65, 10) 
+
+    def get_gradient_magnitude(self, x, y):
+        xi = np.clip(int(x * self.grid_res), 0, self.fmm_field.shape[0] - 1)
+        yi = np.clip(int(y * self.grid_res), 0, self.fmm_field.shape[1] - 1)
+        directions = [(1,0), (-1,0), (0,1), (0,-1)]
+        grads = []
+        current = self.fmm_field[xi, yi]
+        for dx, dy in directions:
+            nx, ny = xi + dx, yi + dy
+            if 0 <= nx < self.fmm_field.shape[0] and 0 <= ny < self.fmm_field.shape[1]:
+                neighbor = self.fmm_field[nx, ny]
+                if np.isfinite(neighbor):
+                    grads.append(abs(current - neighbor))
+        return np.mean(grads) if grads else 0.0
+
 
     def get_accessible_exits(self, pos):
         above_divider = pos[1] >= self.divider_y
@@ -251,3 +295,5 @@ def fit_parabola(x1, x2, y1, y2, y_mid):
     Y = np.array([y1, y_mid, y2])
     a, b, c = np.linalg.solve(A, Y)
     return lambda x: a * x**2 + b * x + c
+
+

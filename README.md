@@ -48,12 +48,16 @@ pip install numpy matplotlib joblib scipy
 Use the following command to simulate the evacuation of 1,000 agents:
 
 ```bash
-python precompute_simulation.py run_1000 1000
+python precompute_simulation.py run_1000 1000 (obstacle)
 ```
 
 - `run_1000` is the name of the run (used as the folder name inside `sim_outputs/`)
 - `1000` is the number of agents in the simulation
 - The simulation will run until all agents have exited or the maximum frame limit is reached
+- If you do not want an obstacle, you can run it without one, just skipping that part. The obstacle should be one of the following:
+    - horizontal_barrier
+    - funnel
+    - parabola
 - Output files (agent positions, crush index, and agent count) will be stored in:
 
 `sim_outputs/run_1000/`

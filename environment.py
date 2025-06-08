@@ -63,11 +63,6 @@ class Environment:
     def _generate_obstacles(self, layout, curve_resolution=10):
         if layout == "horizontal_barrier":
             self.obstacles.append(((60, 7.5), (70, 7.5)))
-        elif layout == "left_block":
-            self.obstacles.append(((10, 20), (10, 60)))
-        elif layout == "maze":
-            for y in range(10, 90, 20):
-                self.obstacles.append(((20, y), (110, y)))
         elif layout == "parabola":
             width = 30
             clearance = 10
@@ -91,6 +86,17 @@ class Environment:
             apex = (funnel_apex_x, funnel_top_y)
             self.obstacles.append((apex, base_left))
             self.obstacles.append((apex, base_right))
+        elif layout == "v_shape":
+            left_base = (59, 10)
+            left_tip = (40, 30)
+
+            right_base = (71, 10)
+            right_tip = (90, 30)
+
+            self.obstacles.append((left_base, left_tip))    # Left side of the V
+            self.obstacles.append((right_base, right_tip))  # Right side of the V
+
+
 
     def _get_all_obstacle_points(self):
         points = []

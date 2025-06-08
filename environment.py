@@ -83,11 +83,11 @@ class Environment:
             for i in range(len(points) - 1):
                 self.obstacles.append((points[i], points[i + 1]))
         elif layout == "funnel":
-            exit_left = 59
-            exit_right = 71
+            exit_left = 55
+            exit_right = 75
             exit_y = 0
-            gap_from_exit = 6.0
-            funnel_top_y = 12.0
+            gap_from_exit = 15
+            funnel_top_y = 22.5
             funnel_apex_x = (exit_left + exit_right) / 2
             base_left = (exit_left, exit_y + gap_from_exit)
             base_right = (exit_right, exit_y + gap_from_exit)
@@ -239,7 +239,6 @@ class Environment:
             if dist < min_dist:
                 min_dist = dist
         return min_dist
-
 
 def fit_parabola(x1, x2, y1, y2, y_mid):
     x_mid = (x1 + x2) / 2

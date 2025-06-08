@@ -65,9 +65,6 @@ class Environment:
             self.obstacles.append(((60, 7.5), (70, 7.5)))
         elif layout == "left_block":
             self.obstacles.append(((10, 20), (10, 60)))
-        elif layout == "cross_blocks":
-            self.obstacles.append(((30, 40), (100, 40)))
-            self.obstacles.append(((65, 20), (65, 70)))
         elif layout == "maze":
             for y in range(10, 90, 20):
                 self.obstacles.append(((20, y), (110, y)))

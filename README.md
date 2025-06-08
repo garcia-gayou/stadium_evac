@@ -58,6 +58,7 @@ python precompute_simulation.py run_1000 1000 (obstacle)
     - horizontal_barrier
     - funnel
     - parabola
+    - v_shape
 - Output files (agent positions, crush index, and agent count) will be stored in:
 
 `sim_outputs/run_1000/`
